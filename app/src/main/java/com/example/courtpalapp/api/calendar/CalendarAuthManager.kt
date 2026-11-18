@@ -2,6 +2,7 @@
 package com.example.courtpalapp.api.calendar
 
 import android.app.Activity
+import android.content.Intent
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
@@ -30,9 +31,11 @@ class CalendarAuthManager(private val activity: Activity) {
             .addOnFailureListener(onError)
     }
 
-    fun getResultFromIntent(
-        data: android.content.Intent
-    ): AuthorizationResult {
+    fun getResultFromIntent(data: Intent): AuthorizationResult {
         return client.getAuthorizationResultFromIntent(data)
+    }
+
+    fun getAccessToken(result: AuthorizationResult): String? {
+        return result.accessToken
     }
 }
