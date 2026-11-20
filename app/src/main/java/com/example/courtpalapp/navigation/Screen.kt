@@ -12,4 +12,9 @@ sealed class Screen(val route: String) {
 
     object MatchSetup : Screen("match_setup")
     object LiveMatch : Screen("live_match")
+
+    data object MatchSummary : Screen("match_summary/{matchId}") {
+        fun createRoute(matchId: Long): String =
+            "match_summary/$matchId"
+    }
 }

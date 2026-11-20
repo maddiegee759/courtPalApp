@@ -8,7 +8,10 @@ import androidx.lifecycle.ViewModel
 import com.example.courtpalapp.domain.match.MatchSettings
 import com.example.courtpalapp.domain.match.TennisScore
 import com.example.courtpalapp.domain.match.TennisScoring
-
+import androidx.lifecycle.viewModelScope
+import com.example.courtpalapp.data.local.MatchDao
+import com.example.courtpalapp.data.local.toMatchEntity
+import kotlinx.coroutines.launch
 class LiveMatchViewModel : ViewModel() {
 
     var score by mutableStateOf<TennisScore?>(null)
@@ -24,6 +27,15 @@ class LiveMatchViewModel : ViewModel() {
         private set
 
     var settings by mutableStateOf<MatchSettings?>(null)
+        private set
+
+    var isSaving by mutableStateOf(false)
+        private set
+
+    var savedMatchId by mutableStateOf<Long?>(null)
+        private set
+
+    var saveError by mutableStateOf<String?>(null)
         private set
 
     fun initialise(newSettings: MatchSettings) {
@@ -65,6 +77,9 @@ class LiveMatchViewModel : ViewModel() {
         history = emptyList()
         rallyShots = 0
         showFinishDialog = false
+        isSaving = false
+        savedMatchId = null
+        saveError = null
     }
 
     fun undoPoint() {
@@ -89,5 +104,38 @@ class LiveMatchViewModel : ViewModel() {
 
     fun dismissFinishDialog() {
         showFinishDialog = false
+    }
+
+    fun saveCompletedMatch(
+        matchDao: MatchDao,
+        onSaved: (Long) -> Unit
+    ) {
+        val currentScore = score ?: return
+        val currentSettings = settings ?: return
+
+        if (!currentScore.isFinished) return
+        if (isSaving) return
+
+        savedMatchId?.let {
+            onSaved(it)
+            return
+        }
+
+        isSaving = true
+        saveError = null
+
+        viewModelScope.launch {
+            try {
+                val entity = currentScore.toMatchEntity(currentSettings)
+                val id = matchDao.insertMatch(entity)
+
+                savedMatchId = id
+                onSaved(id)
+            } catch (e: Exception) {
+                saveError = e.message ?: "Unable to save match"
+            } finally {
+                isSaving = false
+            }
+        }
     }
 }

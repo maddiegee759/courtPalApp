@@ -12,6 +12,8 @@ import androidx.compose.ui.unit.dp
 import com.example.courtpalapp.domain.match.*
 import com.example.courtpalapp.feature.matches.components.ScoreBoard
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.platform.LocalContext
+import com.example.courtpalapp.data.local.AppDatabase
 
 @Composable
 fun LiveMatchScreen(
@@ -20,6 +22,11 @@ fun LiveMatchScreen(
     matchViewModel: LiveMatchViewModel = viewModel()
 ) {
     matchViewModel.initialise(settings)
+    val context = LocalContext.current
+
+    val matchDao = remember(context) {
+        AppDatabase.getDatabase(context).matchDao()
+    }
 
     val score = matchViewModel.score ?: return
     val history = matchViewModel.history
@@ -142,11 +149,27 @@ fun LiveMatchScreen(
 
             Button(
                 onClick = {
-                    onMatchFinished(score)
+                    matchViewModel.saveCompletedMatch(matchDao) {
+                        onMatchFinished(score)
+                    }
                 },
+                enabled = !matchViewModel.isSaving,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("View Match Summary")
+                Text(
+                    if (matchViewModel.isSaving) {
+                        "Saving..."
+                    } else {
+                        "Save Match"
+                    }
+                )
+            }
+
+            matchViewModel.saveError?.let { error ->
+                Text(
+                    text = error,
+                    color = MaterialTheme.colorScheme.error
+                )
             }
         }
 
@@ -200,10 +223,12 @@ fun LiveMatchScreen(
                 TextButton(
                     onClick = {
                         matchViewModel.dismissFinishDialog()
-                        onMatchFinished(score)
+                        matchViewModel.saveCompletedMatch(matchDao) {
+                            onMatchFinished(score)
+                        }
                     }
                 ) {
-                    Text("View summary")
+                    Text("Match History")
                 }
             },
             dismissButton = {

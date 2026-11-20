@@ -10,15 +10,17 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [
         CalendarEventEntity::class,
-        FriendActivityEntity::class
+        FriendActivityEntity::class,
+        MatchEntity::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun calendarEventDao(): CalendarEventDao
     abstract fun friendActivityDao(): FriendActivityDao
+    abstract fun matchDao(): MatchDao
 
     companion object {
         @Volatile
@@ -31,11 +33,13 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "app_database"
                 )
-                .addMigrations(MIGRATION_1_2)
-                .build()
-                .also {
-                    INSTANCE = it
-                }
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4
+                    )
+                    .build()
+                    .also { INSTANCE = it }
             }
         }
 
@@ -43,20 +47,91 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     """
-            CREATE TABLE IF NOT EXISTS friend_activities (
-                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                eventId INTEGER,
-                friendName TEXT NOT NULL,
-                description TEXT NOT NULL,
-                type TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                isRead INTEGER NOT NULL
-            )
+                    CREATE TABLE IF NOT EXISTS friend_activities (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        eventId INTEGER,
+                        friendName TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        isRead INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS matches (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        player1Name TEXT NOT NULL,
+                        player2Name TEXT NOT NULL,
+                        player2Id TEXT,
+                        winner INTEGER NOT NULL,
+                        player1Sets INTEGER NOT NULL,
+                        player2Sets INTEGER NOT NULL,
+                        player1Games INTEGER NOT NULL,
+                        player2Games INTEGER NOT NULL,
+                        player1TotalPoints INTEGER NOT NULL,
+                        player2TotalPoints INTEGER NOT NULL,
+                        longestRally INTEGER NOT NULL,
+                        averageRally REAL NOT NULL,
+                        bestOfSets INTEGER NOT NULL,
+                        gamesPerSet INTEGER NOT NULL,
+                        playedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+            ALTER TABLE matches
+            ADD COLUMN completedSetsJson TEXT NOT NULL DEFAULT '[]'
+            """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+            ALTER TABLE matches
+            ADD COLUMN scoringMode TEXT NOT NULL DEFAULT 'ADVANTAGE'
+            """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+            ALTER TABLE matches
+            ADD COLUMN tieBreakEnabled INTEGER NOT NULL DEFAULT 1
+            """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+            ALTER TABLE matches
+            ADD COLUMN tieBreakPoints INTEGER NOT NULL DEFAULT 7
+            """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+            ALTER TABLE matches
+            ADD COLUMN trackRallies INTEGER NOT NULL DEFAULT 0
+            """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+            ALTER TABLE matches
+            ADD COLUMN matchMode TEXT NOT NULL DEFAULT 'LIVE'
             """.trimIndent()
                 )
             }
         }
     }
 }
-
-

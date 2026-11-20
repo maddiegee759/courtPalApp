@@ -1,7 +1,10 @@
 package com.example.courtpalapp.navigation
 
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
@@ -21,7 +24,9 @@ import com.example.courtpalapp.feature.matches.MatchSetupScreen
 import com.example.courtpalapp.feature.matches.LiveMatchScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.courtpalapp.feature.matches.LiveMatchViewModel
+import com.example.courtpalapp.feature.matches.MatchSummaryScreen
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun AppNavHost() {
     val navController = rememberNavController()
@@ -47,7 +52,33 @@ fun AppNavHost() {
             }
 
             composable(Screen.Matches.route) {
-                MatchHistoryScreen()
+                MatchHistoryScreen(
+                    onMatchClick = { matchId ->
+                        navController.navigate(
+                            Screen.MatchSummary.createRoute(matchId)
+                        )
+                    }
+                )
+            }
+
+            composable(
+                route = Screen.MatchSummary.route
+            ) { backStackEntry ->
+
+                val matchId = backStackEntry.arguments
+                    ?.getString("matchId")
+                    ?.toLongOrNull()
+
+                if (matchId != null) {
+                    MatchSummaryScreen(
+                        matchId = matchId,
+                        onBack = {
+                            navController.popBackStack()
+                        }
+                    )
+                } else {
+                    Text("Invalid match ID")
+                }
             }
 
             composable(Screen.Friends.route) {
@@ -104,8 +135,13 @@ fun AppNavHost() {
                     LiveMatchScreen(
                         settings = settings,
                         matchViewModel = matchViewModel,
-                        onMatchFinished = { score ->
-                            // We'll connect this to Match Summary later.
+                        onMatchFinished = { _ ->
+                            navController.navigate(Screen.Matches.route) {
+                                popUpTo(Screen.LiveMatch.route) {
+                                    inclusive = true
+                                }
+                                launchSingleTop = true
+                            }
                         }
                     )
                 }
