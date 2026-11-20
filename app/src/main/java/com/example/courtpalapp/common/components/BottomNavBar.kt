@@ -47,14 +47,14 @@ fun BottomNavBar(navController: NavHostController) {
     ) {
         items.forEach { (screen, label, icon) ->
             NavigationBarItem(
-                selected = currentRoute == screen.route,
+                selected = currentRoute == screen.route || (screen == Screen.Calendar && currentRoute?.startsWith("${Screen.Calendar.route}/") == true),
                 onClick = {
                     navController.navigate(screen.route) {
                         popUpTo(Screen.Home.route) {
-                            saveState = true
+                            inclusive = false
                         }
                         launchSingleTop = true
-                        restoreState = true
+                        restoreState = false
                     }
                 },
                 icon = {

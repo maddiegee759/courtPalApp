@@ -1,4 +1,3 @@
-
 package com.example.courtpalapp.feature.calendar
 
 import android.os.Build
@@ -28,6 +27,29 @@ import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import com.example.courtpalapp.data.local.AppDatabase
+import com.example.courtpalapp.data.local.toCalendarEvent
+import com.example.courtpalapp.data.local.toEntity
+import kotlinx.coroutines.launch
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.example.courtpalapp.api.calendar.CalendarAuthManager
+import com.example.courtpalapp.api.calendar.GoogleCalendarManager
+import com.example.courtpalapp.data.local.CalendarEventEntity
+import java.time.LocalTime
+import java.time.ZoneId
 
 enum class EventStatus {
     CONFIRMED,
@@ -44,9 +66,31 @@ data class CalendarEvent(
     val status: EventStatus
 )
 
+private enum class GoogleCalendarAction { CREATE, UPDATE, DELETE }
+
+private data class PendingGoogleAction(
+    val action: GoogleCalendarAction,
+    val roomEventId: Long,
+    val event: CalendarEvent? = null,
+    val googleEventId: String? = null
+)
+
+private fun Context.findActivity(): Activity {
+    var current: Context = this
+
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+
+    error("An Activity is required for Google authorisation")
+}
+
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
-fun CalendarScreen() {
+fun CalendarScreen(
+    selectedEventId: Long? = null
+) {
 
     val today = remember { LocalDate.now() }
 
@@ -58,21 +102,208 @@ fun CalendarScreen() {
         mutableStateOf(today)
     }
 
-    // Temporary sample data - replace with Room later
-    val events = remember {
-        mutableStateListOf<CalendarEvent>()
+    var acceptedEventToSync by remember {
+        mutableStateOf<CalendarEventEntity?>(null)
+    }
+
+    // room
+    val context = LocalContext.current
+    val database = remember(context) {
+        AppDatabase.getDatabase(context)
+    }
+    val eventDao = remember(database) {
+        database.calendarEventDao()
+    }
+
+    val coroutineScope = rememberCoroutineScope()
+
+    val savedEvents by eventDao.getAllEvents()
+        .collectAsState(initial = emptyList())
+
+    val events = savedEvents.map { it.toCalendarEvent() }
+
+    // Open the accepted match when navigating here from Friends.
+    var navigatedEvent by remember(selectedEventId) {
+        mutableStateOf<CalendarEventEntity?>(null)
+    }
+    var handledNavigationId by rememberSaveable(selectedEventId) {
+        mutableStateOf<Long?>(null)
+    }
+
+    LaunchedEffect(selectedEventId, savedEvents) {
+        if (selectedEventId != null && handledNavigationId != selectedEventId) {
+            val target = savedEvents.firstOrNull { it.id == selectedEventId }
+            if (target != null) {
+                val targetDate = LocalDate.parse(target.date)
+                selectedDate = targetDate
+                displayedMonth = YearMonth.from(targetDate)
+                navigatedEvent = target
+                handledNavigationId = selectedEventId
+            }
+        }
+    }
+
+
+    val activity = LocalContext.current.findActivity()
+
+    val authManager = remember(activity) {
+        CalendarAuthManager(activity)
+    }
+
+    val googleCalendarManager = remember {
+        GoogleCalendarManager()
+    }
+
+    val snackbarHostState = remember {
+        SnackbarHostState()
+    }
+
+    var pendingGoogleAction by remember { mutableStateOf<PendingGoogleAction?>(null) }
+    var failedGoogleAction by remember { mutableStateOf<PendingGoogleAction?>(null) }
+    var googleBusy by remember { mutableStateOf(false) }
+
+    fun uploadToGoogle(accessToken: String) {
+        val action = pendingGoogleAction ?: return
+        if (googleBusy) return
+        googleBusy = true
+
+        coroutineScope.launch {
+            try {
+                val event = action.event
+                val zone = ZoneId.systemDefault()
+                val startDateTime = event?.let {
+                    it.date.atTime(LocalTime.parse(it.startTime))
+                        .atZone(zone).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                }
+                val endDateTime = event?.let {
+                    it.date.atTime(LocalTime.parse(it.endTime))
+                        .atZone(zone).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                }
+
+                when (action.action) {
+                    GoogleCalendarAction.CREATE -> {
+                        // Room ID check prevents normal retries from creating a second event.
+                        val local = eventDao.getEventById(action.roomEventId)
+                        if (local != null && local.googleEventId == null) {
+                            val source = requireNotNull(event)
+                            val googleId = googleCalendarManager.createEvent(
+                                accessToken = accessToken,
+                                title = source.title,
+                                location = source.location,
+                                description = "Created with courtPal",
+                                startDateTime = requireNotNull(startDateTime),
+                                endDateTime = requireNotNull(endDateTime)
+                            )
+                            eventDao.updateGoogleEventId(action.roomEventId, googleId)
+                        }
+                    }
+                    GoogleCalendarAction.UPDATE -> {
+                        val source = requireNotNull(event)
+                        googleCalendarManager.updateEvent(
+                            accessToken = accessToken,
+                            googleEventId = requireNotNull(action.googleEventId),
+                            title = source.title,
+                            location = source.location,
+                            description = "Updated with courtPal",
+                            startDateTime = requireNotNull(startDateTime),
+                            endDateTime = requireNotNull(endDateTime)
+                        )
+                    }
+                    GoogleCalendarAction.DELETE -> {
+                        googleCalendarManager.deleteEvent(
+                            accessToken = accessToken,
+                            googleEventId = requireNotNull(action.googleEventId)
+                        )
+                        // Only remove the local event after Google confirms deletion.
+                        eventDao.getEventById(action.roomEventId)?.let { local ->
+                            if (local.friendId != null && local.status != EventStatus.CANCELLED.name) {
+                                eventDao.updateEvent(local.copy(
+                                    status = EventStatus.CANCELLED.name,
+                                    googleEventId = null
+                                ))
+                            } else {
+                                eventDao.deleteEvent(local)
+                            }
+                        }
+                    }
+                }
+                failedGoogleAction = null
+                snackbarHostState.showSnackbar("Google Calendar ${action.action.name.lowercase()} successful")
+            } catch (e: Exception) {
+                failedGoogleAction = action
+                snackbarHostState.showSnackbar("Google Calendar operation failed. Tap retry.")
+            } finally {
+                pendingGoogleAction = null
+                googleBusy = false
+            }
+        }
+    }
+
+    val authorizationLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val token = if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            try {
+                authManager.getAccessToken(authManager.getResultFromIntent(result.data!!))
+            } catch (e: Exception) { null }
+        } else null
+
+        if (token != null) {
+            uploadToGoogle(token)
+        } else {
+            failedGoogleAction = pendingGoogleAction
+            pendingGoogleAction = null
+        }
+    }
+
+    fun requestGoogleSync(action: PendingGoogleAction) {
+        if (pendingGoogleAction != null || googleBusy) return
+        pendingGoogleAction = action
+        authManager.requestAuthorization(
+            onSuccess = { result ->
+                if (result.hasResolution()) {
+                    try {
+                        val request = IntentSenderRequest.Builder(
+                            result.pendingIntent!!.intentSender
+                        ).build()
+                        authorizationLauncher.launch(request)
+                    } catch (e: Exception) {
+                        failedGoogleAction = action
+                        pendingGoogleAction = null
+                    }
+                } else {
+                    val token = authManager.getAccessToken(result)
+                    if (token != null) uploadToGoogle(token)
+                    else {
+                        failedGoogleAction = action
+                        pendingGoogleAction = null
+                    }
+                }
+            },
+            onError = {
+                failedGoogleAction = action
+                pendingGoogleAction = null
+            }
+        )
     }
 
     var showAddEventDialog by remember {
         mutableStateOf(false)
     }
 
-    val selectedEvents = events.filter {
-        it.date == selectedDate
+    var eventToEdit by remember { mutableStateOf<CalendarEventEntity?>(null) }
+    var eventToDelete by remember { mutableStateOf<CalendarEventEntity?>(null) }
+    var removeFromGoogle by remember { mutableStateOf(true) }
+
+    val selectedEvents = savedEvents.filter {
+        it.date == selectedDate.toString()
     }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = {
+            SnackbarHost(snackbarHostState)
+        },
         floatingActionButton = {
             FloatingActionButton(
                 onClick = {
@@ -135,6 +366,21 @@ fun CalendarScreen() {
                 )
             }
 
+
+            if (failedGoogleAction != null) {
+                item {
+                    OutlinedButton(
+                        onClick = {
+                            failedGoogleAction?.let { requestGoogleSync(it) }
+                        },
+                        enabled = pendingGoogleAction == null,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Retry Google Calendar sync")
+                    }
+                }
+            }
+
             if (selectedEvents.isEmpty()) {
                 item {
                     Box(
@@ -150,25 +396,343 @@ fun CalendarScreen() {
                     }
                 }
             } else {
-                items(selectedEvents) { event ->
-                    EventCard(event)
+
+
+                items(
+                    items = selectedEvents,
+                    key = { it.id }
+                ) { entity ->
+
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        EventCard(entity.toCalendarEvent())
+
+                        if (entity.status == EventStatus.CANCELLED.name) {
+                            OutlinedButton(
+                                onClick = {
+                                    eventToDelete = entity
+                                    removeFromGoogle = true
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Delete permanently", color = MaterialTheme.colorScheme.error)
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { eventToEdit = entity },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Edit") }
+                                OutlinedButton(
+                                    onClick = {
+                                        eventToDelete = entity
+                                        removeFromGoogle = true
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+
+                        if (
+                            entity.status == EventStatus.PENDING.name &&
+                            entity.friendId != null
+                        ) {
+                            Text(
+                                text = "Proposed to ${entity.friendId}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+
+                                Button(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            try {
+                                                eventDao.updateEventStatus(
+                                                    entity.id,
+                                                    EventStatus.CONFIRMED.name
+                                                )
+
+                                                acceptedEventToSync = entity.copy(
+                                                    status = EventStatus.CONFIRMED.name
+                                                )
+                                            } catch (e: Exception) {
+                                                snackbarHostState.showSnackbar(
+                                                    "Could not confirm the match"
+                                                )
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Text("Accept")
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            eventDao.updateEventStatus(
+                                                entity.id,
+                                                EventStatus.DECLINED.name
+                                            )
+                                        }
+                                    }
+                                ) {
+                                    Text("Decline")
+                                }
+                            }
+
+                            Text(
+                                text = "Demo: simulate the friend's response",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
         }
     }
+
+
+
     if (showAddEventDialog) {
         AddEventDialog(
             initialDate = selectedDate,
             onDismiss = {
                 showAddEventDialog = false
             },
-            onSave = { newEvent ->
-                events.add(newEvent)
 
-                selectedDate = newEvent.date
-                displayedMonth = YearMonth.from(newEvent.date)
+            onSave = { newEvent, syncToGoogle, friendId ->
 
-                showAddEventDialog = false
+                coroutineScope.launch {
+                    try {
+                        val roomEventId = eventDao.insertEvent(
+                            newEvent.toEntity(friendId = friendId)
+                        )
+
+                        selectedDate = newEvent.date
+                        displayedMonth = YearMonth.from(newEvent.date)
+                        showAddEventDialog = false
+
+                        if (syncToGoogle) {
+                            requestGoogleSync(
+                                PendingGoogleAction(
+                                    action = GoogleCalendarAction.CREATE,
+                                    roomEventId = roomEventId,
+                                    event = newEvent
+                                )
+                            )
+                        }
+                    } catch (e: Exception) {
+                        snackbarHostState.showSnackbar(
+                            "Could not save event"
+                        )
+                    }
+                }
+            }
+        )
+    }
+
+    eventToEdit?.let { existing ->
+        key(existing.id) {
+            EditCalendarEventDialog(
+                existingEvent = existing,
+                onDismiss = { eventToEdit = null },
+                onSave = { edited ->
+                    coroutineScope.launch {
+                        try {
+                            eventDao.updateEvent(edited)
+                            selectedDate = LocalDate.parse(edited.date)
+                            displayedMonth = YearMonth.from(selectedDate)
+                            eventToEdit = null
+
+                            if (existing.googleEventId != null) {
+                                requestGoogleSync(PendingGoogleAction(
+                                    action = GoogleCalendarAction.UPDATE,
+                                    roomEventId = existing.id,
+                                    event = edited.toCalendarEvent(),
+                                    googleEventId = existing.googleEventId
+                                ))
+                            } else {
+                                snackbarHostState.showSnackbar("Event updated in courtPal")
+                            }
+                            if (existing.friendId != null) {
+                                snackbarHostState.showSnackbar(
+                                    "Demo only: friend has NOT been notified of the change"
+                                )
+                            }
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("Could not update event")
+                        }
+                    }
+                }
+            )
+        }
+    }
+
+    eventToDelete?.let { event ->
+        AlertDialog(
+            onDismissRequest = { eventToDelete = null },
+            title = { Text(when {
+                event.status == EventStatus.CANCELLED.name -> "Delete cancelled match permanently?"
+                event.friendId != null -> "Cancel match?"
+                else -> "Delete event?"
+            }) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(when {
+                        event.status == EventStatus.CANCELLED.name ->
+                            "Permanently remove this cancelled match from your courtPal calendar? This cannot be undone."
+                        event.friendId != null ->
+                            "Cancel this match in courtPal? This demo does not notify the friend."
+                        else -> "Delete this event from courtPal?"
+                    })
+                    if (event.googleEventId != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = removeFromGoogle,
+                                onCheckedChange = { removeFromGoogle = it }
+                            )
+                            Text("Also remove from Google Calendar")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    // A Google deletion must finish before the Room record is discarded.
+                    if (event.googleEventId != null && removeFromGoogle) {
+                        requestGoogleSync(PendingGoogleAction(
+                            action = GoogleCalendarAction.DELETE,
+                            roomEventId = event.id,
+                            googleEventId = event.googleEventId
+                        ))
+                        eventToDelete = null
+                    } else {
+                        coroutineScope.launch {
+                            try {
+                                if (event.friendId != null && event.status != EventStatus.CANCELLED.name) {
+                                    eventDao.updateEventStatus(
+                                        event.id, EventStatus.CANCELLED.name
+                                    )
+                                } else {
+                                    eventDao.deleteEvent(event)
+                                }
+                                eventToDelete = null
+                                snackbarHostState.showSnackbar(
+                                    if (event.status == EventStatus.CANCELLED.name)
+                                        "Cancelled match permanently deleted from courtPal"
+                                    else if (event.friendId != null)
+                                        "Match cancelled locally; no friend notification sent"
+                                    else "Event deleted from courtPal"
+                                )
+                            } catch (e: Exception) {
+                                snackbarHostState.showSnackbar("Could not delete event")
+                            }
+                        }
+                    }
+                }) { Text("Confirm", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { eventToDelete = null }) { Text("Keep event") }
+            }
+        )
+    }
+
+    navigatedEvent?.let { target ->
+        AlertDialog(
+            onDismissRequest = { navigatedEvent = null },
+            title = { Text("Match confirmed") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(target.title, style = MaterialTheme.typography.titleMedium)
+                    Text("Date: ${target.date}")
+                    Text("Time: ${target.startTime}–${target.endTime}")
+                    Text("Location: ${target.location}")
+                    target.friendId?.let { Text("Playing with: $it") }
+                    if (target.googleEventId == null) {
+                        Text("Would you like to add this match to Google Calendar?")
+                    } else {
+                        Text("Already linked to Google Calendar")
+                    }
+                }
+            },
+            confirmButton = {
+                if (target.googleEventId == null) {
+                    TextButton(onClick = {
+                        navigatedEvent = null
+                        requestGoogleSync(
+                            PendingGoogleAction(
+                                action = GoogleCalendarAction.CREATE,
+                                roomEventId = target.id,
+                                event = target.toCalendarEvent()
+                            )
+                        )
+                    }) { Text("Yes, add event") }
+                } else {
+                    TextButton(onClick = { navigatedEvent = null }) {
+                        Text("Close")
+                    }
+                }
+            },
+            dismissButton = {
+                if (target.googleEventId == null) {
+                    TextButton(onClick = { navigatedEvent = null }) {
+                        Text("No thanks")
+                    }
+                }
+            }
+        )
+    }
+
+    acceptedEventToSync?.let { acceptedEvent ->
+
+        AlertDialog(
+            onDismissRequest = {
+                acceptedEventToSync = null
+            },
+            title = {
+                Text("Add to Google Calendar?")
+            },
+            text = {
+                Text(
+                    "Your tennis match has been confirmed. " +
+                            "Would you like to add it to your Google Calendar?"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        acceptedEventToSync = null
+
+                        requestGoogleSync(
+                            PendingGoogleAction(
+                                action = GoogleCalendarAction.CREATE,
+                                roomEventId = acceptedEvent.id,
+                                event = acceptedEvent.toCalendarEvent()
+                            )
+                        )
+                    }
+                ) {
+                    Text("Yes, add event")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        acceptedEventToSync = null
+                    }
+                ) {
+                    Text("No thanks")
+                }
             }
         )
     }
@@ -416,4 +980,90 @@ fun eventStatusColor(status: EventStatus): Color {
         EventStatus.CANCELLED ->
             Color(0xFF89938D)
     }
+}
+
+
+/** Editing uses the original Room ID and preserves status, friendId and googleEventId. */
+@RequiresApi(Build.VERSION_CODES.O)
+@Composable
+private fun EditCalendarEventDialog(
+    existingEvent: CalendarEventEntity,
+    onDismiss: () -> Unit,
+    onSave: (CalendarEventEntity) -> Unit
+) {
+    val context = LocalContext.current
+    var title by remember(existingEvent.id) { mutableStateOf(existingEvent.title) }
+    var location by remember(existingEvent.id) { mutableStateOf(existingEvent.location) }
+    var date by remember(existingEvent.id) { mutableStateOf(LocalDate.parse(existingEvent.date)) }
+    var start by remember(existingEvent.id) { mutableStateOf(LocalTime.parse(existingEvent.startTime)) }
+    var end by remember(existingEvent.id) { mutableStateOf(LocalTime.parse(existingEvent.endTime)) }
+    val formatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Tennis Event") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Event title") },
+                    singleLine = true
+                )
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        DatePickerDialog(context, { _, year, month, day ->
+                            date = LocalDate.of(year, month + 1, day)
+                        }, date.year, date.monthValue - 1, date.dayOfMonth).show()
+                    }
+                ) { Text("Date: $date") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            TimePickerDialog(context, { _, hour, minute ->
+                                start = LocalTime.of(hour, minute)
+                            }, start.hour, start.minute, true).show()
+                        }
+                    ) { Text(start.format(formatter)) }
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            TimePickerDialog(context, { _, hour, minute ->
+                                end = LocalTime.of(hour, minute)
+                            }, end.hour, end.minute, true).show()
+                        }
+                    ) { Text(end.format(formatter)) }
+                }
+                OutlinedTextField(
+                    value = location,
+                    onValueChange = { location = it },
+                    label = { Text("Location") },
+                    singleLine = true
+                )
+                existingEvent.friendId?.let {
+                    Text("Match with $it (friend cannot be changed)",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = title.isNotBlank() && end.isAfter(start),
+                onClick = {
+                    onSave(existingEvent.copy(
+                        title = title.trim(),
+                        date = date.toString(),
+                        startTime = start.format(formatter),
+                        endTime = end.format(formatter),
+                        location = location.trim()
+                    ))
+                }
+            ) { Text("Save changes") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }

@@ -7,9 +7,11 @@ import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.example.courtpalapp.data.local.CalendarEventEntity
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -19,18 +21,42 @@ import java.time.format.DateTimeFormatter
 fun AddEventDialog(
     initialDate: LocalDate,
     onDismiss: () -> Unit,
-    onSave: (CalendarEvent) -> Unit
+    onSave: (CalendarEvent, Boolean, String?) -> Unit,
+    existingEvent: CalendarEventEntity? = null
 ) {
     val context = LocalContext.current
 
-    var title by remember { mutableStateOf("") }
-    var location by remember { mutableStateOf("") }
-    var selectedDate by remember { mutableStateOf(initialDate) }
-    var startTime by remember { mutableStateOf(LocalTime.of(14, 0)) }
-    var endTime by remember { mutableStateOf(LocalTime.of(15, 0)) }
+    val isEditing = existingEvent != null
+
+    var title by remember(existingEvent) {
+        mutableStateOf(existingEvent?.title ?: "")
+    }
+
+    var location by remember(existingEvent) {
+        mutableStateOf(existingEvent?.location ?: "")
+    }
+
+    var selectedDate by remember(existingEvent) {
+        mutableStateOf(
+            existingEvent?.date?.let(LocalDate::parse) ?: initialDate
+        )
+    }
+
+    var startTime by remember(existingEvent) {
+        mutableStateOf(
+            existingEvent?.startTime?.let(LocalTime::parse)
+                ?: LocalTime.of(14, 0)
+        )
+    }
+
+    var endTime by remember(existingEvent) {
+        mutableStateOf(
+            existingEvent?.endTime?.let(LocalTime::parse)
+                ?: LocalTime.of(15, 0)
+        )
+    }
 
     val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
-
     val datePicker = DatePickerDialog(
         context,
         { _, year, month, day ->
@@ -61,10 +87,18 @@ fun AddEventDialog(
         true
     )
 
+    var syncToGoogle by remember {
+        mutableStateOf(false)
+    }
+
+    var proposeToFriend by remember(existingEvent) {mutableStateOf(existingEvent?.friendId != null)}
+
+    var friendName by remember(existingEvent) {mutableStateOf(existingEvent?.friendId ?: "") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text("Create Tennis Event")
+            if (isEditing) Text("Edit Tennis Event")
+            else Text("Create Tennis Event")
         },
         text = {
             Column(
@@ -111,12 +145,67 @@ fun AddEventDialog(
                     placeholder = { Text("Court 2") },
                     singleLine = true
                 )
+
+                if (!isEditing) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Switch(
+                            checked = proposeToFriend,
+                            onCheckedChange = {
+                                proposeToFriend = it
+                            }
+                        )
+
+                        Spacer(Modifier.width(12.dp))
+
+                        Text("Propose to a friend")
+                    }
+                }
+
+                if (proposeToFriend) {
+                    OutlinedTextField(
+                        value = friendName,
+                        onValueChange = { friendName = it },
+                        label = { Text("Friend's name") },
+                        placeholder = { Text("e.g. Alex") },
+                        singleLine = true,
+                        readOnly = isEditing,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        text = "The event will remain pending until accepted.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = syncToGoogle,
+                        onCheckedChange = { syncToGoogle = it }
+                    )
+
+                    Text(
+                        text = "Add to Google Calendar",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+
             }
         },
         confirmButton = {
+
             TextButton(
                 enabled = title.isNotBlank() &&
-                        endTime.isAfter(startTime),
+                        endTime.isAfter(startTime) &&
+                        (!proposeToFriend || friendName.isNotBlank()),
                 onClick = {
                     onSave(
                         CalendarEvent(
@@ -125,12 +214,26 @@ fun AddEventDialog(
                             startTime = startTime.format(timeFormatter),
                             endTime = endTime.format(timeFormatter),
                             location = location.trim(),
-                            status = EventStatus.CONFIRMED
-                        )
+                            status = existingEvent?.status
+                                ?.let(EventStatus::valueOf)
+                                ?: if (proposeToFriend) {
+                                    EventStatus.PENDING
+                                } else {
+                                    EventStatus.CONFIRMED
+                                }
+                        ),
+                        syncToGoogle && !proposeToFriend,
+                        if (proposeToFriend) friendName.trim() else null
                     )
                 }
             ) {
-                Text("Create")
+                Text(
+                    when {
+                        isEditing -> "Save Changes"
+                        proposeToFriend -> "Send Proposal"
+                        else -> "Create"
+                    }
+                )
             }
         },
         dismissButton = {

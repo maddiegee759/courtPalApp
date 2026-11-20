@@ -20,7 +20,7 @@ class CalendarAuthManager(private val activity: Activity) {
             .setRequestedScopes(
                 listOf(
                     Scope(
-                        "https://www.googleapis.com/auth/calendar.events.owned"
+                        "https://www.googleapis.com/auth/calendar.events"
                     )
                 )
             )
