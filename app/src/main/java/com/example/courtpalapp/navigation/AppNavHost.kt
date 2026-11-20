@@ -1,4 +1,3 @@
-
 package com.example.courtpalapp.navigation
 
 import androidx.compose.foundation.layout.padding
@@ -10,17 +9,23 @@ import androidx.navigation.navArgument
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-
 import com.example.courtpalapp.common.components.BottomNavBar
 import com.example.courtpalapp.feature.home.HomeScreen
 import com.example.courtpalapp.feature.matches.MatchHistoryScreen
 import com.example.courtpalapp.feature.friends.FriendsScreen
 import com.example.courtpalapp.feature.calendar.CalendarScreen
 import com.example.courtpalapp.feature.profile.ProfileScreen
+import androidx.compose.runtime.*
+import com.example.courtpalapp.domain.match.MatchSettings
+import com.example.courtpalapp.feature.matches.MatchSetupScreen
+import com.example.courtpalapp.feature.matches.LiveMatchScreen
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.courtpalapp.feature.matches.LiveMatchViewModel
 
 @Composable
 fun AppNavHost() {
     val navController = rememberNavController()
+    val matchViewModel: LiveMatchViewModel = viewModel()
 
     Scaffold(
         bottomBar = {
@@ -34,7 +39,11 @@ fun AppNavHost() {
             modifier = Modifier.padding(innerPadding)
         ) {
             composable(Screen.Home.route) {
-                HomeScreen()
+                HomeScreen(
+                    onStartMatchClick = {
+                        navController.navigate(Screen.MatchSetup.route)
+                    }
+                )
             }
 
             composable(Screen.Matches.route) {
@@ -76,6 +85,30 @@ fun AppNavHost() {
 
             composable(Screen.Profile.route) {
                 ProfileScreen()
+            }
+
+            composable(Screen.MatchSetup.route) {
+                MatchSetupScreen(
+                    onStartMatch = { settings ->
+                        matchViewModel.startNewMatch(settings)
+                        navController.navigate(Screen.LiveMatch.route)
+                    },
+                    onAddFriend = {
+                        navController.navigate(Screen.Friends.route)
+                    }
+                )
+            }
+
+            composable(Screen.LiveMatch.route) {
+                matchViewModel.settings?.let { settings ->
+                    LiveMatchScreen(
+                        settings = settings,
+                        matchViewModel = matchViewModel,
+                        onMatchFinished = { score ->
+                            // We'll connect this to Match Summary later.
+                        }
+                    )
+                }
             }
         }
     }
