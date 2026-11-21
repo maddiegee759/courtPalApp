@@ -1,5 +1,6 @@
 package com.example.courtpalapp.navigation
 
+import android.net.Uri
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.padding
@@ -27,6 +28,10 @@ import com.example.courtpalapp.feature.profile.ProfileScreen
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import com.example.courtpalapp.data.local.AppDatabase
+import com.example.courtpalapp.data.local.ActiveMatchJson
+import com.example.courtpalapp.domain.match.MatchMode
+import com.example.courtpalapp.domain.match.MatchSettings
+import com.example.courtpalapp.feature.matches.ManualMatchScreen
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,10 +41,25 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.example.courtpalapp.feature.home.getUpcomingMatches
 
+private const val MANUAL_RESULT_ROUTE = "manual-result/{settings}?eventId={eventId}"
+
+private fun manualResultRoute(settings: MatchSettings, eventId: Long? = null): String {
+    val encodedSettings = Uri.encode(ActiveMatchJson.settingsToJson(settings))
+    val eventQuery = eventId?.let { "?eventId=$it" }.orEmpty()
+    return "manual-result/$encodedSettings$eventQuery"
+}
+
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun AppNavHost() {
     val navController = rememberNavController()
+
+    LaunchedEffect(navController) {
+        navController.currentBackStackEntryFlow.collect { entry ->
+            android.util.Log.d("CourtPalNav", "route=${entry.destination.route}")
+        }
+    }
+
     val matchViewModel: LiveMatchViewModel = viewModel()
     val context = LocalContext.current
 
@@ -96,7 +116,9 @@ fun AppNavHost() {
             composable(Screen.Matches.route) {
                 MatchHistoryScreen(
                     onMatchClick = { matchId ->
-                        navController.navigate("match-detail/$matchId")
+                        if (navController.currentBackStackEntry?.destination?.route == Screen.Matches.route) {
+                            navController.navigate("match-detail/$matchId")
+                        }
                     }
                 )
             }
@@ -164,7 +186,13 @@ fun AppNavHost() {
 
             composable(Screen.MatchSetup.route) {
                 MatchSetupScreen(
-                    onStartMatch = { settings ->
+                    onStartMatch = onStartMatch@{ settings ->
+                        if (settings.matchMode == MatchMode.MANUAL) {
+                            navController.navigate(manualResultRoute(settings)) {
+                                launchSingleTop = true
+                            }
+                            return@onStartMatch
+                        }
                         matchViewModel.startPersistedMatch(
                             newSettings = settings,
                             onCreated = {
@@ -215,7 +243,13 @@ fun AppNavHost() {
                                 ?: "Guest",
                             initialPlayer2Id = event.friendId,
 
-                            onStartMatch = { settings ->
+                            onStartMatch = onStartMatch@{ settings ->
+                                if (settings.matchMode == MatchMode.MANUAL) {
+                                    navController.navigate(manualResultRoute(settings, eventId)) {
+                                        launchSingleTop = true
+                                    }
+                                    return@onStartMatch
+                                }
                                 matchViewModel.startPersistedMatch(
                                     newSettings = settings,
                                     calendarEventId = eventId,
@@ -246,6 +280,38 @@ fun AppNavHost() {
                 }
             }
 
+            composable(
+                route = MANUAL_RESULT_ROUTE,
+                arguments = listOf(
+                    navArgument("settings") { type = NavType.StringType },
+                    navArgument("eventId") {
+                        type = NavType.LongType
+                        defaultValue = -1L
+                    }
+                )
+            ) { entry ->
+                val settings = remember(entry) {
+                    entry.arguments?.getString("settings")?.let { json ->
+                        runCatching { ActiveMatchJson.settingsFromJson(json) }.getOrNull()
+                    }
+                }
+                if (settings == null) {
+                    Text("Could not load match settings.")
+                } else {
+                    ManualMatchScreen(
+                        settings = settings,
+                        calendarEventId = entry.arguments?.getLong("eventId")?.takeIf { it != -1L },
+                        onBack = { navController.popBackStack() },
+                        onSaved = {
+                            navController.navigate(Screen.Matches.route) {
+                                popUpTo(Screen.Home.route)
+                                launchSingleTop = true
+                            }
+                        }
+                    )
+                }
+            }
+
             composable(Screen.LiveMatch.route) {
                 matchViewModel.settings?.let { settings ->
                     LiveMatchScreen(
@@ -273,7 +339,7 @@ fun AppNavHost() {
                                 launchSingleTop = true
                             }
                         },
-                        )
+                    )
                 }
             }
 
@@ -326,7 +392,7 @@ fun AppNavHost() {
                                 launchSingleTop = true
                             }
                         }
-                        )
+                    )
                 } else {
                     Box(
                         modifier = Modifier.fillMaxSize(),

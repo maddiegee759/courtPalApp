@@ -205,7 +205,7 @@ private fun formatMatchSets(json: String): String = try {
 private fun photoFolder(context: android.content.Context): File =
     File(context.filesDir, "match_photos").apply { mkdirs() }
 
-private fun copyPhotoToPrivateStorage(context: android.content.Context, uri: Uri): String {
+internal fun copyPhotoToPrivateStorage(context: android.content.Context, uri: Uri): String {
     val file = File(photoFolder(context), "${UUID.randomUUID()}.jpg")
     try {
         val bitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -221,7 +221,7 @@ private fun copyPhotoToPrivateStorage(context: android.content.Context, uri: Uri
     }
 }
 
-private fun saveBitmapToPrivateStorage(context: android.content.Context, bitmap: Bitmap): String {
+internal fun saveBitmapToPrivateStorage(context: android.content.Context, bitmap: Bitmap): String {
     val file = File(photoFolder(context), "${UUID.randomUUID()}.jpg")
     try {
         FileOutputStream(file).use { output ->
@@ -234,7 +234,7 @@ private fun saveBitmapToPrivateStorage(context: android.content.Context, bitmap:
     }
 }
 
-private fun deleteOwnedPhoto(filesDir: File, path: String) {
+internal fun deleteOwnedPhoto(filesDir: File, path: String) {
     val folder = File(filesDir, "match_photos").canonicalFile
     val file = File(path).canonicalFile
     if (file.parentFile == folder) file.delete()
