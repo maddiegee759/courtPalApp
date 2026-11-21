@@ -12,6 +12,14 @@ import com.example.courtpalapp.domain.match.MatchMode
 import com.example.courtpalapp.domain.match.MatchSettings
 import com.example.courtpalapp.domain.match.ScoringMode
 import kotlin.random.Random
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.Role
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +102,13 @@ fun MatchSetupScreen(
 
     var tossChoice by rememberSaveable {
         mutableStateOf<String?>(null)
+    }
+
+    // Derive the first server from the toss winner and their decision.
+    val coinTossFirstServer = when (tossChoice) {
+        "Serve" -> tossWinner ?: 1
+        "Receive" -> if (tossWinner == 1) 2 else 1
+        else -> 1
     }
 
     Column(
@@ -435,7 +450,7 @@ fun MatchSetupScreen(
                         Text("$player1Name, call the coin:")
 
                         Row(
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
                                 selected = coinCallHeads,
@@ -467,33 +482,39 @@ fun MatchSetupScreen(
 
                         Text("Toss winner chooses:")
 
-                        Row {
-                            RadioButton(
-                                selected = tossChoice == "serve",
-                                onClick = {
-                                    tossChoice = "serve"
-                                    firstServer = tossWinner ?: 1
-                                }
-                            )
-                            Text("Serve")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            listOf("Serve", "Receive").forEach { choice ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .selectable(
+                                            selected = tossChoice == choice,
+                                            onClick = { tossChoice = choice },
+                                            role = Role.RadioButton
+                                        )
+                                ) {
+                                    RadioButton(
+                                        selected = tossChoice == choice,
+                                        onClick = null
+                                    )
 
-                            Spacer(Modifier.width(12.dp))
-
-                            RadioButton(
-                                selected = tossChoice == "receive",
-                                onClick = {
-                                    tossChoice = "receive"
-                                    firstServer =
-                                        if (tossWinner == 1) 2 else 1
+                                    Text(
+                                        text = choice,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
                                 }
-                            )
-                            Text("Receive")
+                            }
                         }
 
                         if (tossChoice != null) {
                             Text(
                                 "First server: " +
-                                        if (firstServer == 1)
+                                        if (coinTossFirstServer == 1)
                                             player1Name
                                         else
                                             player2Name
@@ -534,7 +555,7 @@ fun MatchSetupScreen(
                                     trackRallies = trackRallies,
                                     matchMode = matchMode,
                                     coinFlipEnabled = true,
-                                    firstServer = firstServer
+                                    firstServer = coinTossFirstServer
                                 )
                             )
                         }

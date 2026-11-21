@@ -20,7 +20,8 @@ fun CalendarEventEntity.toCalendarEvent(): CalendarEvent {
 }
 
 fun CalendarEvent.toEntity(
-    friendId: String? = null
+    friendId: String? = null,
+    friendName: String? = null
 ): CalendarEventEntity {
     return CalendarEventEntity(
         title = title,
@@ -29,6 +30,7 @@ fun CalendarEvent.toEntity(
         endTime = endTime,
         location = location,
         status = status.name,
-        friendId = friendId
+        friendId = friendId,
+        friendName = friendName
     )
 }

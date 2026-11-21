@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FriendActivityEntity::class,
         MatchEntity::class
     ],
-    version = 4,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -36,7 +36,9 @@ abstract class AppDatabase : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_1_2,
                         MIGRATION_2_3,
-                        MIGRATION_3_4
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6
                     )
                     .build()
                     .also { INSTANCE = it }
@@ -131,6 +133,38 @@ abstract class AppDatabase : RoomDatabase() {
             ADD COLUMN matchMode TEXT NOT NULL DEFAULT 'LIVE'
             """.trimIndent()
                 )
+            }
+        }
+
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+
+                db.execSQL(
+                    """
+            ALTER TABLE calendar_events
+            ADD COLUMN friendName TEXT
+            """.trimIndent()
+                )
+
+                // Existing friendId values contain names,
+                // so preserve them in the new display-name field.
+                db.execSQL(
+                    """
+            UPDATE calendar_events
+            SET friendName = friendId
+            WHERE friendId IS NOT NULL
+            """.trimIndent()
+                )
+            }
+        }
+
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE calendar_events ADD COLUMN proposedTitle TEXT")
+                db.execSQL("ALTER TABLE calendar_events ADD COLUMN proposedDate TEXT")
+                db.execSQL("ALTER TABLE calendar_events ADD COLUMN proposedStartTime TEXT")
+                db.execSQL("ALTER TABLE calendar_events ADD COLUMN proposedEndTime TEXT")
+                db.execSQL("ALTER TABLE calendar_events ADD COLUMN proposedLocation TEXT")
             }
         }
     }

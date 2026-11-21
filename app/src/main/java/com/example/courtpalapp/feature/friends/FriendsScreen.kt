@@ -1,5 +1,7 @@
 package com.example.courtpalapp.feature.friends
 
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -39,6 +41,9 @@ import androidx.compose.ui.platform.LocalContext
 import com.example.courtpalapp.data.local.AppDatabase
 import com.example.courtpalapp.feature.calendar.EventStatus
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 data class FriendMatchProposal(
     val id: Long,
@@ -65,6 +70,7 @@ data class FriendActivity(
     val photoUri: String? = null
 )
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun FriendsScreen(
     onNavigateToCalendarEvent: (Long) -> Unit = {}
@@ -87,17 +93,22 @@ fun FriendsScreen(
     val pendingProposals = savedEvents
         .filter {
             it.status == EventStatus.PENDING.name &&
-                    it.friendId != null
+                    !it.friendId.isNullOrBlank() && !it.friendName.isNullOrBlank() && it.friendId != it.friendName
         }
         .map { event ->
             FriendMatchProposal(
                 id = event.id,
-                friendName = event.friendId ?: "",
+                friendName = event.friendName ?: event.friendId ?: "",
                 date = event.date,
                 time = "${event.startTime}–${event.endTime}",
                 location = event.location
             )
         }
+
+    val amendments = savedEvents.filter {
+        it.proposedTitle != null && it.status == EventStatus.CONFIRMED.name &&
+                !it.friendId.isNullOrBlank() && !it.friendName.isNullOrBlank() && it.friendId != it.friendName
+    }
 
     val friendActivities = emptyList<FriendActivity>()
 
@@ -163,6 +174,39 @@ fun FriendsScreen(
                 }
             }
 
+            if (amendments.isNotEmpty()) {
+                item {
+                    Text("Amended Match Proposals",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold)
+                }
+                items(amendments, key = { "amendment_${it.id}" }) { event ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Proposed changes for ${event.friendName}",
+                                style = MaterialTheme.typography.titleMedium)
+                            Text("Current: ${event.title} · ${event.date} · ${event.startTime}–${event.endTime} · ${event.location}")
+                            Text("Proposed: ${event.proposedTitle} · ${event.proposedDate} · ${event.proposedStartTime}–${event.proposedEndTime} · ${event.proposedLocation}")
+                            Text("Local demo: simulate the other friend's decision",
+                                style = MaterialTheme.typography.labelSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = {
+                                    coroutineScope.launch {
+                                        if (eventDao.acceptAmendment(event.id) == 1) {
+                                            onNavigateToCalendarEvent(event.id)
+                                        }
+                                    }
+                                }, modifier = Modifier.weight(1f)) { Text("Accept") }
+                                OutlinedButton(onClick = {
+                                    coroutineScope.launch { eventDao.declineAmendment(event.id) }
+                                }, modifier = Modifier.weight(1f)) { Text("Decline") }
+                            }
+                        }
+                    }
+                }
+            }
+
             item {
                 Text(
                     text = "Friends Activity",
@@ -191,6 +235,7 @@ fun FriendsScreen(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun MatchProposalCard(
     proposal: FriendMatchProposal,
@@ -215,23 +260,27 @@ private fun MatchProposalCard(
                 fontWeight = FontWeight.SemiBold
             )
 
+            val formattedDate = remember(proposal.date) {
+                LocalDate.parse(proposal.date).format(
+                    DateTimeFormatter.ofPattern("EEE d MMM", Locale.UK)
+                )
+            }
+
             Text(
-                text = "${proposal.date} · ${proposal.time}",
+                text = "$formattedDate ${proposal.time}",
                 style = MaterialTheme.typography.bodyMedium
             )
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Default.LocationOn,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-
-                Spacer(Modifier.width(8.dp))
-
-                Text(proposal.location)
+            if (proposal.location.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.LocationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(proposal.location)
+                }
             }
 
             Row(
@@ -349,4 +398,3 @@ private fun EmptyFriendsActivity() {
         )
     }
 }
-

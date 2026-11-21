@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -65,6 +66,15 @@ data class CalendarEvent(
     val location: String,
     val status: EventStatus
 )
+
+// Legacy version-5 events stored a typed name in both fields.
+// They must never be treated as verified linked CourtPal accounts.
+private fun CalendarEventEntity.isLinkedCourtPalFriend(): Boolean =
+    !friendId.isNullOrBlank() && !friendName.isNullOrBlank() && friendId != friendName
+
+private fun CalendarEventEntity.displayFriendName(): String? =
+    friendName?.takeIf { it.isNotBlank() }
+        ?: friendId?.takeIf { it.isNotBlank() }
 
 private enum class GoogleCalendarAction { CREATE, UPDATE, DELETE }
 
@@ -216,7 +226,7 @@ fun CalendarScreen(
                         )
                         // Only remove the local event after Google confirms deletion.
                         eventDao.getEventById(action.roomEventId)?.let { local ->
-                            if (local.friendId != null && local.status != EventStatus.CANCELLED.name) {
+                            if (local.isLinkedCourtPalFriend() && local.status != EventStatus.CANCELLED.name) {
                                 eventDao.updateEvent(local.copy(
                                     status = EventStatus.CANCELLED.name,
                                     googleEventId = null
@@ -292,6 +302,7 @@ fun CalendarScreen(
     }
 
     var eventToEdit by remember { mutableStateOf<CalendarEventEntity?>(null) }
+    var amendmentToConfirm by remember { mutableStateOf<Pair<CalendarEventEntity, CalendarEventEntity>?>(null) }
     var eventToDelete by remember { mutableStateOf<CalendarEventEntity?>(null) }
     var removeFromGoogle by remember { mutableStateOf(true) }
 
@@ -406,8 +417,15 @@ fun CalendarScreen(
                     Column(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        EventCard(entity.toCalendarEvent())
+                        EventCard(
+                            event = entity.toCalendarEvent(),
+                            friendName = entity.displayFriendName()
+                        )
 
+                        if (entity.proposedTitle != null) {
+                            Text("Amendment awaiting approval (original match remains confirmed)",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
                         if (entity.status == EventStatus.CANCELLED.name) {
                             OutlinedButton(
                                 onClick = {
@@ -441,10 +459,10 @@ fun CalendarScreen(
 
                         if (
                             entity.status == EventStatus.PENDING.name &&
-                            entity.friendId != null
+                            entity.isLinkedCourtPalFriend()
                         ) {
                             Text(
-                                text = "Proposed to ${entity.friendId}",
+                                text = "Proposed to ${entity.displayFriendName()}",
                                 style = MaterialTheme.typography.bodySmall
                             )
 
@@ -506,16 +524,20 @@ fun CalendarScreen(
     if (showAddEventDialog) {
         AddEventDialog(
             initialDate = selectedDate,
+            // Temporary development-only account for proposal testing.
+            courtPalFriends = listOf(
+                CalendarFriendOption(userId = "test-user-001", username = "testfriend")
+            ),
             onDismiss = {
                 showAddEventDialog = false
             },
 
-            onSave = { newEvent, syncToGoogle, friendId ->
+            onSave = { newEvent, syncToGoogle, friendName, friendId ->
 
                 coroutineScope.launch {
                     try {
                         val roomEventId = eventDao.insertEvent(
-                            newEvent.toEntity(friendId = friendId)
+                            newEvent.toEntity(friendId = friendId, friendName = friendName)
                         )
 
                         selectedDate = newEvent.date
@@ -549,6 +571,21 @@ fun CalendarScreen(
                 onSave = { edited ->
                     coroutineScope.launch {
                         try {
+                            if (existing.isLinkedCourtPalFriend() &&
+                                existing.status == EventStatus.CONFIRMED.name
+                            ) {
+                                eventToEdit = null
+                                if (existing.proposedTitle != null) {
+                                    snackbarHostState.showSnackbar("An amendment is already awaiting approval")
+                                } else if (existing.title == edited.title && existing.date == edited.date &&
+                                    existing.startTime == edited.startTime && existing.endTime == edited.endTime &&
+                                    existing.location == edited.location) {
+                                    snackbarHostState.showSnackbar("No changes to propose")
+                                } else {
+                                    amendmentToConfirm = existing to edited
+                                }
+                                return@launch
+                            }
                             eventDao.updateEvent(edited)
                             selectedDate = LocalDate.parse(edited.date)
                             displayedMonth = YearMonth.from(selectedDate)
@@ -564,7 +601,7 @@ fun CalendarScreen(
                             } else {
                                 snackbarHostState.showSnackbar("Event updated in courtPal")
                             }
-                            if (existing.friendId != null) {
+                            if (existing.isLinkedCourtPalFriend()) {
                                 snackbarHostState.showSnackbar(
                                     "Demo only: friend has NOT been notified of the change"
                                 )
@@ -578,12 +615,48 @@ fun CalendarScreen(
         }
     }
 
+    amendmentToConfirm?.let { (original, proposed) ->
+        AlertDialog(
+            onDismissRequest = { amendmentToConfirm = null },
+            title = { Text("Send amended proposal?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Your confirmed match will not change until the amendment is accepted.")
+                    Text("Current: ${original.title} · ${original.date} · ${original.startTime}–${original.endTime} · ${original.location}")
+                    Text("Proposed: ${proposed.title} · ${proposed.date} · ${proposed.startTime}–${proposed.endTime} · ${proposed.location}")
+                    Text("Demo: this proposal appears locally in Friends, not on another device.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    amendmentToConfirm = null
+                    coroutineScope.launch {
+                        try {
+                            val saved = eventDao.submitAmendment(
+                                original.id, proposed.title, proposed.date, proposed.startTime,
+                                proposed.endTime, proposed.location
+                            )
+                            snackbarHostState.showSnackbar(if (saved == 1)
+                                "Amended proposal saved for approval (local demo)"
+                            else "Could not propose changes; refresh the event")
+                        } catch (e: Exception) {
+                            snackbarHostState.showSnackbar("Could not save amended proposal")
+                        }
+                    }
+                }) { Text("Send proposal") }
+            },
+            dismissButton = {
+                TextButton(onClick = { amendmentToConfirm = null }) { Text("Keep original") }
+            }
+        )
+    }
+
     eventToDelete?.let { event ->
         AlertDialog(
             onDismissRequest = { eventToDelete = null },
             title = { Text(when {
                 event.status == EventStatus.CANCELLED.name -> "Delete cancelled match permanently?"
-                event.friendId != null -> "Cancel match?"
+                event.isLinkedCourtPalFriend() -> "Cancel match?"
                 else -> "Delete event?"
             }) },
             text = {
@@ -591,7 +664,7 @@ fun CalendarScreen(
                     Text(when {
                         event.status == EventStatus.CANCELLED.name ->
                             "Permanently remove this cancelled match from your courtPal calendar? This cannot be undone."
-                        event.friendId != null ->
+                        event.isLinkedCourtPalFriend() ->
                             "Cancel this match in courtPal? This demo does not notify the friend."
                         else -> "Delete this event from courtPal?"
                     })
@@ -619,7 +692,7 @@ fun CalendarScreen(
                     } else {
                         coroutineScope.launch {
                             try {
-                                if (event.friendId != null && event.status != EventStatus.CANCELLED.name) {
+                                if (event.isLinkedCourtPalFriend() && event.status != EventStatus.CANCELLED.name) {
                                     eventDao.updateEventStatus(
                                         event.id, EventStatus.CANCELLED.name
                                     )
@@ -630,7 +703,7 @@ fun CalendarScreen(
                                 snackbarHostState.showSnackbar(
                                     if (event.status == EventStatus.CANCELLED.name)
                                         "Cancelled match permanently deleted from courtPal"
-                                    else if (event.friendId != null)
+                                    else if (event.isLinkedCourtPalFriend())
                                         "Match cancelled locally; no friend notification sent"
                                     else "Event deleted from courtPal"
                                 )
@@ -657,11 +730,11 @@ fun CalendarScreen(
                     Text("Date: ${target.date}")
                     Text("Time: ${target.startTime}–${target.endTime}")
                     Text("Location: ${target.location}")
-                    target.friendId?.let { Text("Playing with: $it") }
+                    target.displayFriendName()?.let { Text("Playing with: $it") }
                     if (target.googleEventId == null) {
                         Text("Would you like to add this match to Google Calendar?")
                     } else {
-                        Text("Already linked to Google Calendar")
+                        Text("Would you like to update the existing Google Calendar event with these match details?")
                     }
                 }
             },
@@ -678,17 +751,19 @@ fun CalendarScreen(
                         )
                     }) { Text("Yes, add event") }
                 } else {
-                    TextButton(onClick = { navigatedEvent = null }) {
-                        Text("Close")
-                    }
+                    TextButton(onClick = {
+                        navigatedEvent = null
+                        requestGoogleSync(PendingGoogleAction(
+                            action = GoogleCalendarAction.UPDATE,
+                            roomEventId = target.id,
+                            event = target.toCalendarEvent(),
+                            googleEventId = target.googleEventId
+                        ))
+                    }) { Text("Yes, update event") }
                 }
             },
             dismissButton = {
-                if (target.googleEventId == null) {
-                    TextButton(onClick = { navigatedEvent = null }) {
-                        Text("No thanks")
-                    }
-                }
+                TextButton(onClick = { navigatedEvent = null }) { Text("No thanks") }
             }
         )
     }
@@ -899,7 +974,7 @@ fun MonthCalendar(
 }
 
 @Composable
-fun EventCard(event: CalendarEvent) {
+fun EventCard(event: CalendarEvent, friendName: String? = null) {
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -933,6 +1008,23 @@ fun EventCard(event: CalendarEvent) {
                 )
             }
 
+            if (!friendName.isNullOrBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.People,
+                        contentDescription = "Friend event",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = friendName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -947,18 +1039,20 @@ fun EventCard(event: CalendarEvent) {
                 Text("${event.startTime}–${event.endTime}")
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Default.LocationOn,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
+            if (event.location.isNotBlank()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.LocationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
 
-                Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(8.dp))
 
-                Text(event.location)
+                    Text(event.location)
+                }
             }
         }
     }
@@ -1042,7 +1136,7 @@ private fun EditCalendarEventDialog(
                     label = { Text("Location") },
                     singleLine = true
                 )
-                existingEvent.friendId?.let {
+                (existingEvent.friendName ?: existingEvent.friendId)?.let {
                     Text("Match with $it (friend cannot be changed)",
                         style = MaterialTheme.typography.bodySmall)
                 }

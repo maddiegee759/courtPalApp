@@ -5,6 +5,8 @@ import android.app.TimePickerDialog
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,230 +18,152 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
+/** A friend already linked to a CourtPal account. Do not populate with manual names. */
+data class CalendarFriendOption(val userId: String, val username: String)
+
+
 @RequiresApi(Build.VERSION_CODES.O)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddEventDialog(
     initialDate: LocalDate,
     onDismiss: () -> Unit,
-    onSave: (CalendarEvent, Boolean, String?) -> Unit,
-    existingEvent: CalendarEventEntity? = null
+    onSave: (CalendarEvent, Boolean, String?, String?) -> Unit,
+    existingEvent: CalendarEventEntity? = null,
+    courtPalFriends: List<CalendarFriendOption> = emptyList()
 ) {
     val context = LocalContext.current
-
     val isEditing = existingEvent != null
-
-    var title by remember(existingEvent) {
-        mutableStateOf(existingEvent?.title ?: "")
-    }
-
-    var location by remember(existingEvent) {
-        mutableStateOf(existingEvent?.location ?: "")
-    }
-
+    var title by remember(existingEvent) { mutableStateOf(existingEvent?.title ?: "") }
+    var location by remember(existingEvent) { mutableStateOf(existingEvent?.location ?: "") }
     var selectedDate by remember(existingEvent) {
-        mutableStateOf(
-            existingEvent?.date?.let(LocalDate::parse) ?: initialDate
-        )
+        mutableStateOf(existingEvent?.date?.let(LocalDate::parse) ?: initialDate)
     }
-
     var startTime by remember(existingEvent) {
-        mutableStateOf(
-            existingEvent?.startTime?.let(LocalTime::parse)
-                ?: LocalTime.of(14, 0)
-        )
+        mutableStateOf(existingEvent?.startTime?.let(LocalTime::parse) ?: LocalTime.of(14, 0))
     }
-
     var endTime by remember(existingEvent) {
-        mutableStateOf(
-            existingEvent?.endTime?.let(LocalTime::parse)
-                ?: LocalTime.of(15, 0)
-        )
+        mutableStateOf(existingEvent?.endTime?.let(LocalTime::parse) ?: LocalTime.of(15, 0))
     }
-
-    val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
-    val datePicker = DatePickerDialog(
-        context,
-        { _, year, month, day ->
-            selectedDate = LocalDate.of(year, month + 1, day)
-        },
-        selectedDate.year,
-        selectedDate.monthValue - 1,
-        selectedDate.dayOfMonth
-    )
-
-    val startTimePicker = TimePickerDialog(
-        context,
-        { _, hour, minute ->
-            startTime = LocalTime.of(hour, minute)
-        },
-        startTime.hour,
-        startTime.minute,
-        true
-    )
-
-    val endTimePicker = TimePickerDialog(
-        context,
-        { _, hour, minute ->
-            endTime = LocalTime.of(hour, minute)
-        },
-        endTime.hour,
-        endTime.minute,
-        true
-    )
-
-    var syncToGoogle by remember {
-        mutableStateOf(false)
+    var syncToGoogle by remember { mutableStateOf(false) }
+    // Blank name means solo. Selecting a dropdown entry links to a CourtPal friend;
+    // typing a name manually never links an account.
+    var friendName by remember(existingEvent) { mutableStateOf(existingEvent?.friendName ?: existingEvent?.friendId ?: "") }
+    var selectedFriend by remember { mutableStateOf<CalendarFriendOption?>(null) }
+    var dropdownExpanded by remember { mutableStateOf(false) }
+    val matchingFriends = courtPalFriends.filter {
+        it.username.contains(friendName.trim().removePrefix("@"), ignoreCase = true)
     }
+    val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
 
-    var proposeToFriend by remember(existingEvent) {mutableStateOf(existingEvent?.friendId != null)}
-
-    var friendName by remember(existingEvent) {mutableStateOf(existingEvent?.friendId ?: "") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            if (isEditing) Text("Edit Tennis Event")
-            else Text("Create Tennis Event")
-        },
+        title = { Text(if (isEditing) "Edit Tennis Event" else "Create Tennis Event") },
         text = {
             Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-
                 OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
+                    value = title, onValueChange = { title = it },
                     label = { Text("Event title") },
                     placeholder = { Text("Tennis with Alex") },
-                    singleLine = true
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
-
                 OutlinedButton(
-                    onClick = { datePicker.show() },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Date: $selectedDate")
+                    onClick = {
+                        DatePickerDialog(context, { _, year, month, day ->
+                            selectedDate = LocalDate.of(year, month + 1, day)
+                        }, selectedDate.year, selectedDate.monthValue - 1, selectedDate.dayOfMonth).show()
+                    }, modifier = Modifier.fillMaxWidth()
+                ) { Text("Date: $selectedDate") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        TimePickerDialog(context, { _, hour, minute ->
+                            startTime = LocalTime.of(hour, minute)
+                        }, startTime.hour, startTime.minute, true).show()
+                    }, modifier = Modifier.weight(1f)) { Text(startTime.format(timeFormatter)) }
+                    OutlinedButton(onClick = {
+                        TimePickerDialog(context, { _, hour, minute ->
+                            endTime = LocalTime.of(hour, minute)
+                        }, endTime.hour, endTime.minute, true).show()
+                    }, modifier = Modifier.weight(1f)) { Text(endTime.format(timeFormatter)) }
                 }
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { startTimePicker.show() },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(startTime.format(timeFormatter))
-                    }
-
-                    OutlinedButton(
-                        onClick = { endTimePicker.show() },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(endTime.format(timeFormatter))
-                    }
-                }
-
                 OutlinedTextField(
-                    value = location,
-                    onValueChange = { location = it },
-                    label = { Text("Location") },
-                    placeholder = { Text("Court 2") },
-                    singleLine = true
+                    value = location, onValueChange = { location = it },
+                    label = { Text("Location") }, placeholder = { Text("Court 2") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
 
-                if (!isEditing) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Switch(
-                            checked = proposeToFriend,
-                            onCheckedChange = {
-                                proposeToFriend = it
-                            }
-                        )
-
-                        Spacer(Modifier.width(12.dp))
-
-                        Text("Propose to a friend")
-                    }
-                }
-
-                if (proposeToFriend) {
+                ExposedDropdownMenuBox(
+                    expanded = dropdownExpanded && matchingFriends.isNotEmpty() && !isEditing,
+                    onExpandedChange = { if (!isEditing) dropdownExpanded = it }
+                ) {
                     OutlinedTextField(
                         value = friendName,
-                        onValueChange = { friendName = it },
-                        label = { Text("Friend's name") },
-                        placeholder = { Text("e.g. Alex") },
+                        onValueChange = { typed ->
+                            friendName = typed
+                            selectedFriend = null
+                            dropdownExpanded = typed.isNotBlank()
+                        },
+                        label = { Text("Friend's name (optional)") },
+                        placeholder = { Text("Leave blank for solo, or enter a name") },
                         singleLine = true,
                         readOnly = isEditing,
-                        modifier = Modifier.fillMaxWidth()
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = dropdownExpanded)
+                        },
+                        modifier = Modifier.fillMaxWidth().menuAnchor()
                     )
-
-                    Text(
-                        text = "The event will remain pending until accepted.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    ExposedDropdownMenu(
+                        expanded = dropdownExpanded && matchingFriends.isNotEmpty() && !isEditing,
+                        onDismissRequest = { dropdownExpanded = false }
+                    ) {
+                        matchingFriends.forEach { friend ->
+                            DropdownMenuItem(
+                                text = { Text("@${friend.username}") },
+                                onClick = {
+                                    friendName = friend.username
+                                    selectedFriend = friend
+                                    dropdownExpanded = false
+                                }
+                            )
+                        }
+                    }
                 }
-
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Checkbox(
-                        checked = syncToGoogle,
-                        onCheckedChange = { syncToGoogle = it }
-                    )
-
-                    Text(
-                        text = "Add to Google Calendar",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = syncToGoogle, onCheckedChange = { syncToGoogle = it })
+                    Text("Add to Google Calendar", style = MaterialTheme.typography.bodyMedium)
                 }
-
             }
         },
         confirmButton = {
-
             TextButton(
-                enabled = title.isNotBlank() &&
-                        endTime.isAfter(startTime) &&
-                        (!proposeToFriend || friendName.isNotBlank()),
+                enabled = title.isNotBlank() && endTime.isAfter(startTime),
                 onClick = {
+                    val isLinked = selectedFriend != null
                     onSave(
                         CalendarEvent(
-                            title = title.trim(),
-                            date = selectedDate,
+                            title = title.trim(), date = selectedDate,
                             startTime = startTime.format(timeFormatter),
                             endTime = endTime.format(timeFormatter),
                             location = location.trim(),
-                            status = existingEvent?.status
-                                ?.let(EventStatus::valueOf)
-                                ?: if (proposeToFriend) {
-                                    EventStatus.PENDING
-                                } else {
-                                    EventStatus.CONFIRMED
-                                }
+                            status = existingEvent?.status?.let(EventStatus::valueOf)
+                                ?: if (isLinked) EventStatus.PENDING else EventStatus.CONFIRMED
                         ),
-                        syncToGoogle && !proposeToFriend,
-                        if (proposeToFriend) friendName.trim() else null
+                        syncToGoogle && !isLinked,
+                        friendName.trim().ifBlank { null },
+                        selectedFriend?.userId
                     )
                 }
             ) {
-                Text(
-                    when {
-                        isEditing -> "Save Changes"
-                        proposeToFriend -> "Send Proposal"
-                        else -> "Create"
-                    }
-                )
+                Text(when {
+                    isEditing -> "Save Changes"
+                    selectedFriend != null -> "Send Proposal"
+                    else -> "Create"
+                })
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
