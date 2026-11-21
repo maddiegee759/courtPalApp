@@ -36,5 +36,6 @@ data class MatchEntity(
     val trackRallies: Boolean = false,
     val matchMode: String = "LIVE",
 
-    val playedAt: Long = System.currentTimeMillis()
+    val playedAt: Long = System.currentTimeMillis(),
+    val photoUri: String? = null
 )

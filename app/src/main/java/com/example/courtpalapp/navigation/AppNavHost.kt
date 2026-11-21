@@ -7,6 +7,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import androidx.navigation.compose.NavHost
@@ -15,16 +16,14 @@ import androidx.navigation.compose.rememberNavController
 import com.example.courtpalapp.common.components.BottomNavBar
 import com.example.courtpalapp.feature.home.HomeScreen
 import com.example.courtpalapp.feature.matches.MatchHistoryScreen
+import com.example.courtpalapp.feature.matches.MatchDetailScreen
+import com.example.courtpalapp.feature.matches.MatchSetupScreen
+import com.example.courtpalapp.feature.matches.LiveMatchScreen
+import com.example.courtpalapp.feature.matches.LiveMatchViewModel
+import com.example.courtpalapp.feature.matches.MatchSummaryScreen
 import com.example.courtpalapp.feature.friends.FriendsScreen
 import com.example.courtpalapp.feature.calendar.CalendarScreen
 import com.example.courtpalapp.feature.profile.ProfileScreen
-import androidx.compose.runtime.*
-import com.example.courtpalapp.domain.match.MatchSettings
-import com.example.courtpalapp.feature.matches.MatchSetupScreen
-import com.example.courtpalapp.feature.matches.LiveMatchScreen
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.courtpalapp.feature.matches.LiveMatchViewModel
-import com.example.courtpalapp.feature.matches.MatchSummaryScreen
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -33,11 +32,8 @@ fun AppNavHost() {
     val matchViewModel: LiveMatchViewModel = viewModel()
 
     Scaffold(
-        bottomBar = {
-            BottomNavBar(navController)
-        }
+        bottomBar = { BottomNavBar(navController) }
     ) { innerPadding ->
-
         NavHost(
             navController = navController,
             startDestination = Screen.Home.route,
@@ -54,17 +50,30 @@ fun AppNavHost() {
             composable(Screen.Matches.route) {
                 MatchHistoryScreen(
                     onMatchClick = { matchId ->
-                        navController.navigate(
-                            Screen.MatchSummary.createRoute(matchId)
-                        )
+                        navController.navigate("match-detail/$matchId")
                     }
                 )
             }
 
             composable(
-                route = Screen.MatchSummary.route
+                route = "match-detail/{matchId}",
+                arguments = listOf(
+                    navArgument("matchId") { type = NavType.LongType }
+                )
             ) { backStackEntry ->
+                val matchId = backStackEntry.arguments?.getLong("matchId")
+                if (matchId != null) {
+                    MatchDetailScreen(
+                        matchId = matchId,
+                        onBack = { navController.popBackStack() }
+                    )
+                } else {
+                    Text("Invalid match ID")
+                }
+            }
 
+            // Retain the existing summary destination for other callers.
+            composable(route = Screen.MatchSummary.route) { backStackEntry ->
                 val matchId = backStackEntry.arguments
                     ?.getString("matchId")
                     ?.toLongOrNull()
@@ -72,9 +81,7 @@ fun AppNavHost() {
                 if (matchId != null) {
                     MatchSummaryScreen(
                         matchId = matchId,
-                        onBack = {
-                            navController.popBackStack()
-                        }
+                        onBack = { navController.popBackStack() }
                     )
                 } else {
                     Text("Invalid match ID")
@@ -84,9 +91,7 @@ fun AppNavHost() {
             composable(Screen.Friends.route) {
                 FriendsScreen(
                     onNavigateToCalendarEvent = { eventId ->
-                        navController.navigate(
-                            "${Screen.Calendar.route}/$eventId"
-                        ) {
+                        navController.navigate("${Screen.Calendar.route}/$eventId") {
                             launchSingleTop = true
                         }
                     }
@@ -100,18 +105,11 @@ fun AppNavHost() {
             composable(
                 route = "${Screen.Calendar.route}/{eventId}",
                 arguments = listOf(
-                    navArgument("eventId") {
-                        type = NavType.LongType
-                    }
+                    navArgument("eventId") { type = NavType.LongType }
                 )
             ) { backStackEntry ->
-
-                val eventId = backStackEntry.arguments
-                    ?.getLong("eventId")
-
-                CalendarScreen(
-                    selectedEventId = eventId
-                )
+                val eventId = backStackEntry.arguments?.getLong("eventId")
+                CalendarScreen(selectedEventId = eventId)
             }
 
             composable(Screen.Profile.route) {

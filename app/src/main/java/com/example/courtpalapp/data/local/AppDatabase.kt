@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FriendActivityEntity::class,
         MatchEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -38,7 +38,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_2_3,
                         MIGRATION_3_4,
                         MIGRATION_4_5,
-                        MIGRATION_5_6
+                        MIGRATION_5_6,
+                        MIGRATION_6_7
                     )
                     .build()
                     .also { INSTANCE = it }
@@ -165,6 +166,14 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE calendar_events ADD COLUMN proposedStartTime TEXT")
                 db.execSQL("ALTER TABLE calendar_events ADD COLUMN proposedEndTime TEXT")
                 db.execSQL("ALTER TABLE calendar_events ADD COLUMN proposedLocation TEXT")
+            }
+        }
+
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE matches ADD COLUMN photoUri TEXT"
+                )
             }
         }
     }

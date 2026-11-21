@@ -7,7 +7,6 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface MatchDao {
-
     @Insert
     suspend fun insertMatch(match: MatchEntity): Long
 
@@ -19,4 +18,7 @@ interface MatchDao {
 
     @Query("DELETE FROM matches WHERE id = :matchId")
     suspend fun deleteMatchById(matchId: Long)
+
+    @Query("UPDATE matches SET photoUri = :photoUri WHERE id = :matchId")
+    suspend fun updateMatchPhoto(matchId: Long, photoUri: String?)
 }
