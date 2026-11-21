@@ -156,10 +156,12 @@ private fun MatchHistoryCard(
                 text = "Sets: ${formatMatchSets(match)}",
                 style = MaterialTheme.typography.bodyMedium
             )
-            Text(
-                text = "Points won: ${match.player1TotalPoints} – ${match.player2TotalPoints}",
-                style = MaterialTheme.typography.bodySmall
-            )
+            if (match.matchMode != "MANUAL") {
+                Text(
+                    text = "Points won: ${match.player1TotalPoints} – ${match.player2TotalPoints}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
             if (match.trackRallies) {
                 Text(
                     text = "Longest rally: ${match.longestRally} shots",

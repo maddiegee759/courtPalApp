@@ -115,7 +115,9 @@ fun MatchDetailScreen(
                 Text("Winner: $winner", color = MaterialTheme.colorScheme.primary)
                 HorizontalDivider()
                 Text("Sets: ${formatMatchSets(current.completedSetsJson)}")
-                Text("Points won: ${current.player1TotalPoints} – ${current.player2TotalPoints}")
+                if (current.matchMode != "MANUAL") {
+                    Text("Points won: ${current.player1TotalPoints} – ${current.player2TotalPoints}")
+                }
                 if (current.trackRallies) {
                     Text("Longest rally: ${current.longestRally} shots")
                     Text("Average rally: ${"%.1f".format(Locale.UK, current.averageRally)} shots")
