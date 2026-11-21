@@ -48,7 +48,7 @@ fun MatchHistoryScreen(
 
         if (matches.isEmpty()) {
             Text(
-                text = "No completed matches yet.",
+                text = "No matches saved yet.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -73,9 +73,10 @@ private fun MatchHistoryCard(
     val date = remember(match.playedAt) {
         SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(match.playedAt))
     }
-    val winnerName = when (match.winner) {
-        1 -> match.player1Name
-        2 -> match.player2Name
+    val winnerName = when {
+        !match.isCompleted -> null
+        match.winner == 1 -> match.player1Name
+        match.winner == 2 -> match.player2Name
         else -> "Unknown"
     }
 
@@ -126,9 +127,17 @@ private fun MatchHistoryCard(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Winner: $winnerName",
+                text = if (match.isCompleted) {
+                    "Winner: $winnerName"
+                } else {
+                    "Match unfinished"
+                },
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary
+                color = if (match.isCompleted) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.error
+                }
             )
 
             // Show the match photo directly in the history card when available.
@@ -142,8 +151,9 @@ private fun MatchHistoryCard(
             }
 
             HorizontalDivider()
+
             Text(
-                text = "Sets: ${formatCompletedSets(match.completedSetsJson)}",
+                text = "Sets: ${formatMatchSets(match)}",
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
@@ -188,3 +198,20 @@ private fun formatCompletedSets(json: String): String {
         "Unavailable"
     }
 }
+
+private fun formatMatchSets(match: MatchEntity): String {
+    val completed = formatCompletedSets(match.completedSetsJson)
+
+    if (match.isCompleted) {
+        return completed
+    }
+
+    val currentSet = "${match.player1Games}–${match.player2Games}"
+
+    return if (completed == "Not recorded") {
+        currentSet
+    } else {
+        "$completed  |  $currentSet"
+    }
+}
+

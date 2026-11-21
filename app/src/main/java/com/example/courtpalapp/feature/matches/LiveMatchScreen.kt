@@ -19,6 +19,8 @@ import com.example.courtpalapp.data.local.AppDatabase
 fun LiveMatchScreen(
     settings: MatchSettings,
     onMatchFinished: (TennisScore) -> Unit = {},
+    onMatchQuit: () -> Unit = {},
+    onMatchDeleted: () -> Unit = {},
     matchViewModel: LiveMatchViewModel = viewModel()
 ) {
     matchViewModel.initialise(settings)
@@ -32,6 +34,7 @@ fun LiveMatchScreen(
     val history = matchViewModel.history
     val rallyShots = matchViewModel.rallyShots
     val showFinishDialog = matchViewModel.showFinishDialog
+    var showQuitDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -200,6 +203,90 @@ fun LiveMatchScreen(
                         " shots"
             )
         }
+
+        if (!score.isFinished) {
+            HorizontalDivider()
+
+            OutlinedButton(
+                onClick = { showQuitDialog = true },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Text("Quit Match")
+            }
+        }
+    }
+
+
+    if (showQuitDialog) {
+        AlertDialog(
+            onDismissRequest = { showQuitDialog = false },
+            title = { Text("Quit Match?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "This match is unfinished. Would you like to " +
+                                "save the partial result to Match History " +
+                                "or permanently delete it?"
+                    )
+
+                    matchViewModel.saveError?.let { error ->
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        matchViewModel.saveUnfinishedMatch(
+                            database = AppDatabase.getDatabase(context),
+                            onSaved = {
+                                showQuitDialog = false
+                                onMatchQuit()
+                            }
+                        )
+                    },
+                    enabled = !matchViewModel.isSaving
+                ) {
+                    Text(
+                        if (matchViewModel.isSaving) "Saving..."
+                        else "Save to History"
+                    )
+                }
+            },
+            dismissButton = {
+                Column {
+                    TextButton(
+                        onClick = {
+                            matchViewModel.deleteUnfinishedMatch(
+                                onDeleted = {
+                                    showQuitDialog = false
+                                    onMatchDeleted()
+                                }
+                            )
+                        },
+                        enabled = !matchViewModel.isSaving
+                    ) {
+                        Text(
+                            "Delete Match",
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+
+
+                    TextButton(
+                        onClick = { showQuitDialog = false }
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            }
+        )
     }
 
     if (showFinishDialog) {

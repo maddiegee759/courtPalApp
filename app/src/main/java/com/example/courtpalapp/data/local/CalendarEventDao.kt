@@ -54,4 +54,7 @@ interface CalendarEventDao {
         proposedLocation = NULL
         WHERE id = :eventId AND proposedTitle IS NOT NULL""")
     suspend fun declineAmendment(eventId: Long): Int
+
+    @Query("UPDATE calendar_events SET hasStarted = 1 WHERE id = :eventId")
+    suspend fun markMatchStarted(eventId: Long)
 }

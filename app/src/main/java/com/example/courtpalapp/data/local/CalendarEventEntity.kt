@@ -20,5 +20,6 @@ data class CalendarEventEntity(
     val proposedDate: String? = null,
     val proposedStartTime: String? = null,
     val proposedEndTime: String? = null,
-    val proposedLocation: String? = null
+    val proposedLocation: String? = null,
+    val hasStarted: Boolean = false
 )

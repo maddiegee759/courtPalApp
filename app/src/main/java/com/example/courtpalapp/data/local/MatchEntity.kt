@@ -13,6 +13,7 @@ data class MatchEntity(
     val player2Id: String?,
 
     val winner: Int,
+    val isCompleted: Boolean = true,
 
     val player1Sets: Int,
     val player2Sets: Int,

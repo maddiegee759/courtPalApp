@@ -26,18 +26,21 @@ import androidx.compose.ui.semantics.Role
 fun MatchSetupScreen(
     onStartMatch: (MatchSettings) -> Unit,
     onAddFriend: () -> Unit = {},
-    friends: List<Pair<String, String>> = emptyList()
+    friends: List<Pair<String, String>> = emptyList(),
+    initialPlayer2Name: String = "Guest",
+    initialPlayer2Id: String? = null,
+    errorMessage: String? = null
 ) {
     var player1Name by rememberSaveable {
         mutableStateOf("You")
     }
 
-    var player2Name by rememberSaveable {
-        mutableStateOf("Guest")
+    var player2Name by rememberSaveable(initialPlayer2Name) {
+        mutableStateOf(initialPlayer2Name)
     }
 
-    var player2Id by rememberSaveable {
-        mutableStateOf<String?>(null)
+    var player2Id by rememberSaveable(initialPlayer2Id) {
+        mutableStateOf(initialPlayer2Id)
     }
 
     var bestOfSets by rememberSaveable {
@@ -388,6 +391,14 @@ fun MatchSetupScreen(
             Text(
                 text = "Manual",
                 modifier = Modifier.padding(top = 12.dp)
+            )
+        }
+
+        if (errorMessage != null) {
+            Text(
+                text = errorMessage,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium
             )
         }
 

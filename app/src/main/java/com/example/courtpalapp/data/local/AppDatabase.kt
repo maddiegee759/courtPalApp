@@ -11,9 +11,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [
         CalendarEventEntity::class,
         FriendActivityEntity::class,
-        MatchEntity::class
+        MatchEntity::class,
+        ActiveMatchEntity::class
     ],
-    version = 7,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -21,6 +22,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun calendarEventDao(): CalendarEventDao
     abstract fun friendActivityDao(): FriendActivityDao
     abstract fun matchDao(): MatchDao
+    abstract fun activeMatchDao(): ActiveMatchDao
 
     companion object {
         @Volatile
@@ -39,7 +41,9 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_3_4,
                         MIGRATION_4_5,
                         MIGRATION_5_6,
-                        MIGRATION_6_7
+                        MIGRATION_6_7,
+                        MIGRATION_7_8,
+                        MIGRATION_8_9
                     )
                     .build()
                     .also { INSTANCE = it }
@@ -95,44 +99,44 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     """
-            ALTER TABLE matches
-            ADD COLUMN completedSetsJson TEXT NOT NULL DEFAULT '[]'
-            """.trimIndent()
+                    ALTER TABLE matches
+                    ADD COLUMN completedSetsJson TEXT NOT NULL DEFAULT '[]'
+                    """.trimIndent()
                 )
 
                 db.execSQL(
                     """
-            ALTER TABLE matches
-            ADD COLUMN scoringMode TEXT NOT NULL DEFAULT 'ADVANTAGE'
-            """.trimIndent()
+                    ALTER TABLE matches
+                    ADD COLUMN scoringMode TEXT NOT NULL DEFAULT 'ADVANTAGE'
+                    """.trimIndent()
                 )
 
                 db.execSQL(
                     """
-            ALTER TABLE matches
-            ADD COLUMN tieBreakEnabled INTEGER NOT NULL DEFAULT 1
-            """.trimIndent()
+                    ALTER TABLE matches
+                    ADD COLUMN tieBreakEnabled INTEGER NOT NULL DEFAULT 1
+                    """.trimIndent()
                 )
 
                 db.execSQL(
                     """
-            ALTER TABLE matches
-            ADD COLUMN tieBreakPoints INTEGER NOT NULL DEFAULT 7
-            """.trimIndent()
+                    ALTER TABLE matches
+                    ADD COLUMN tieBreakPoints INTEGER NOT NULL DEFAULT 7
+                    """.trimIndent()
                 )
 
                 db.execSQL(
                     """
-            ALTER TABLE matches
-            ADD COLUMN trackRallies INTEGER NOT NULL DEFAULT 0
-            """.trimIndent()
+                    ALTER TABLE matches
+                    ADD COLUMN trackRallies INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent()
                 )
 
                 db.execSQL(
                     """
-            ALTER TABLE matches
-            ADD COLUMN matchMode TEXT NOT NULL DEFAULT 'LIVE'
-            """.trimIndent()
+                    ALTER TABLE matches
+                    ADD COLUMN matchMode TEXT NOT NULL DEFAULT 'LIVE'
+                    """.trimIndent()
                 )
             }
         }
@@ -142,19 +146,19 @@ abstract class AppDatabase : RoomDatabase() {
 
                 db.execSQL(
                     """
-            ALTER TABLE calendar_events
-            ADD COLUMN friendName TEXT
-            """.trimIndent()
+                    ALTER TABLE calendar_events
+                    ADD COLUMN friendName TEXT
+                    """.trimIndent()
                 )
 
                 // Existing friendId values contain names,
                 // so preserve them in the new display-name field.
                 db.execSQL(
                     """
-            UPDATE calendar_events
-            SET friendName = friendId
-            WHERE friendId IS NOT NULL
-            """.trimIndent()
+                    UPDATE calendar_events
+                    SET friendName = friendId
+                    WHERE friendId IS NOT NULL
+                    """.trimIndent()
                 )
             }
         }
@@ -173,6 +177,46 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "ALTER TABLE matches ADD COLUMN photoUri TEXT"
+                )
+            }
+        }
+
+
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+
+                db.execSQL(
+                    """
+                    ALTER TABLE calendar_events
+                    ADD COLUMN hasStarted INTEGER NOT NULL DEFAULT 0
+                    """.trimIndent()
+                )
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS active_matches (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        calendarEventId INTEGER,
+                        player1Name TEXT NOT NULL,
+                        player2Name TEXT NOT NULL,
+                        settingsJson TEXT NOT NULL,
+                        scoreJson TEXT NOT NULL,
+                        historyJson TEXT NOT NULL,
+                        rallyShots INTEGER NOT NULL,
+                        lastUpdated INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    ALTER TABLE matches
+                    ADD COLUMN isCompleted INTEGER NOT NULL DEFAULT 1
+                    """.trimIndent()
                 )
             }
         }

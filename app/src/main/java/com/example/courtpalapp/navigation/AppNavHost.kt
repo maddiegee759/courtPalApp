@@ -24,12 +24,36 @@ import com.example.courtpalapp.feature.matches.MatchSummaryScreen
 import com.example.courtpalapp.feature.friends.FriendsScreen
 import com.example.courtpalapp.feature.calendar.CalendarScreen
 import com.example.courtpalapp.feature.profile.ProfileScreen
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import com.example.courtpalapp.data.local.AppDatabase
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import com.example.courtpalapp.feature.home.getUpcomingMatches
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun AppNavHost() {
     val navController = rememberNavController()
     val matchViewModel: LiveMatchViewModel = viewModel()
+    val context = LocalContext.current
+
+    val activeMatchDao = remember(context) {
+        AppDatabase.getDatabase(context).activeMatchDao()
+    }
+
+    val calendarEventDao = remember(context) {
+        AppDatabase.getDatabase(context).calendarEventDao()
+    }
+
+    LaunchedEffect(activeMatchDao) {
+        matchViewModel.setActiveMatchDao(activeMatchDao)
+    }
 
     Scaffold(
         bottomBar = { BottomNavBar(navController) }
@@ -39,10 +63,32 @@ fun AppNavHost() {
             startDestination = Screen.Home.route,
             modifier = Modifier.padding(innerPadding)
         ) {
+
             composable(Screen.Home.route) {
+                val activeMatches by activeMatchDao
+                    .getAllActiveMatches()
+                    .collectAsState(initial = emptyList())
+
+                val calendarEvents by calendarEventDao.getAllEvents()
+                    .collectAsState(initial = emptyList())
+
+                val upcomingMatches = getUpcomingMatches(calendarEvents)
+
                 HomeScreen(
                     onStartMatchClick = {
                         navController.navigate(Screen.MatchSetup.route)
+                    },
+                    activeMatches = activeMatches,
+                    onContinueMatchClick = { matchId ->
+                        navController.navigate(
+                            Screen.ResumeMatch.createRoute(matchId)
+                        )
+                    },
+                    upcomingMatches = upcomingMatches,
+                    onStartScheduledMatchClick = { eventId ->
+                        navController.navigate(
+                            Screen.ScheduledMatchSetup.createRoute(eventId)
+                        )
                     }
                 )
             }
@@ -119,13 +165,85 @@ fun AppNavHost() {
             composable(Screen.MatchSetup.route) {
                 MatchSetupScreen(
                     onStartMatch = { settings ->
-                        matchViewModel.startNewMatch(settings)
-                        navController.navigate(Screen.LiveMatch.route)
+                        matchViewModel.startPersistedMatch(
+                            newSettings = settings,
+                            onCreated = {
+                                navController.navigate(Screen.LiveMatch.route)
+                            }
+                        )
                     },
                     onAddFriend = {
                         navController.navigate(Screen.Friends.route)
                     }
                 )
+            }
+
+
+            composable(
+                route = Screen.ScheduledMatchSetup.route,
+                arguments = listOf(
+                    navArgument("eventId") {
+                        type = NavType.LongType
+                    },
+                )
+
+            ) { backStackEntry ->
+
+                val eventId = backStackEntry.arguments
+                    ?.getLong("eventId")
+                    ?: return@composable
+
+                LaunchedEffect(eventId) {
+                    matchViewModel.clearPersistenceError()
+                }
+
+                val calendarEvents by calendarEventDao.getAllEvents()
+                    .collectAsState(initial = emptyList())
+
+                val event = calendarEvents.firstOrNull { it.id == eventId }
+
+                if (event != null) {
+
+                    if (
+                        event.status == "CONFIRMED" &&
+                        !event.hasStarted
+                    ) {
+                        val persistenceError = matchViewModel.persistenceError
+                        MatchSetupScreen(
+                            initialPlayer2Name = event.friendName
+                                ?.takeIf { it.isNotBlank() }
+                                ?: "Guest",
+                            initialPlayer2Id = event.friendId,
+
+                            onStartMatch = { settings ->
+                                matchViewModel.startPersistedMatch(
+                                    newSettings = settings,
+                                    calendarEventId = eventId,
+                                    database = AppDatabase.getDatabase(context),
+                                    onCreated = { matchId ->
+                                        navController.navigate(
+                                            Screen.ResumeMatch.createRoute(matchId)
+                                        ) {
+                                            popUpTo(Screen.ScheduledMatchSetup.route) {
+                                                inclusive = true
+                                            }
+                                            launchSingleTop = true
+                                        }
+                                    }
+                                )
+                            },
+                            onAddFriend = {
+                                navController.navigate(Screen.Friends.route)
+                            },
+                            errorMessage = matchViewModel.persistenceError
+                        )
+                    } else {
+                        Text("This scheduled match is no longer available to start.")
+                    }
+
+                } else {
+                    CircularProgressIndicator()
+                }
             }
 
             composable(Screen.LiveMatch.route) {
@@ -140,8 +258,82 @@ fun AppNavHost() {
                                 }
                                 launchSingleTop = true
                             }
+                        },
+                        onMatchQuit = {
+                            navController.navigate(Screen.Matches.route) {
+                                popUpTo(Screen.Home.route)
+                                launchSingleTop = true
+                            }
+                        },
+                        onMatchDeleted = {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.Home.route) {
+                                    inclusive = false
+                                }
+                                launchSingleTop = true
+                            }
+                        },
+                        )
+                }
+            }
+
+
+            composable(
+                route = Screen.ResumeMatch.route,
+                arguments = listOf(
+                    navArgument("matchId") {
+                        type = NavType.LongType
+                    }
+                )
+            ) { backStackEntry ->
+
+                val matchId = backStackEntry.arguments
+                    ?.getLong("matchId")
+                    ?: return@composable
+
+                LaunchedEffect(matchId) {
+                    matchViewModel.loadActiveMatch(matchId) {}
+                }
+
+                val settings = matchViewModel.settings
+
+                if (
+                    matchViewModel.activeMatchId == matchId &&
+                    settings != null
+                ) {
+                    LiveMatchScreen(
+                        settings = settings,
+                        matchViewModel = matchViewModel,
+                        onMatchFinished = { _ ->
+                            navController.navigate(Screen.Matches.route) {
+                                popUpTo(Screen.ResumeMatch.route) {
+                                    inclusive = true
+                                }
+                                launchSingleTop = true
+                            }
+                        },
+                        onMatchQuit = {
+                            navController.navigate(Screen.Matches.route) {
+                                popUpTo(Screen.Home.route)
+                                launchSingleTop = true
+                            }
+                        },
+                        onMatchDeleted = {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.Home.route) {
+                                    inclusive = false
+                                }
+                                launchSingleTop = true
+                            }
                         }
-                    )
+                        )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
                 }
             }
         }

@@ -6,11 +6,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 fun TennisScore.toMatchEntity(
-    settings: MatchSettings
+    settings: MatchSettings,
+    allowUnfinished: Boolean = false
 ): MatchEntity {
 
-    require(isFinished) {
-        "Only completed matches can be saved"
+    require(isFinished || allowUnfinished) {
+        "Only completed matches can be saved normally"
     }
 
     val setsJson = JSONArray()
@@ -37,7 +38,8 @@ fun TennisScore.toMatchEntity(
         player2Name = settings.player2Name,
         player2Id = settings.player2Id,
 
-        winner = requireNotNull(winner),
+        winner = if (isFinished) requireNotNull(winner) else 0,
+        isCompleted = isFinished,
 
         player1Sets = player1Sets,
         player2Sets = player2Sets,
