@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
@@ -14,7 +16,7 @@ import androidx.room.RoomDatabase
         FriendEntity::class,
         UserEntity::class
     ],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,6 +30,28 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
 
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE matches ADD COLUMN ownerUserId INTEGER")
+                db.execSQL("ALTER TABLE friend_activities ADD COLUMN ownerUserId INTEGER")
+                db.execSQL("ALTER TABLE friend_activities ADD COLUMN badgeId TEXT")
+                db.execSQL("ALTER TABLE calendar_events ADD COLUMN createdAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS
+                    index_friend_activities_ownerUserId_badgeId
+                    ON friend_activities(ownerUserId, badgeId)
+                """.trimIndent())
+
+                // Existing records cannot safely be attributed if several
+                // accounts share this device. A sole account is unambiguous.
+                db.execSQL("""
+                    UPDATE matches
+                    SET ownerUserId = (SELECT id FROM users LIMIT 1)
+                    WHERE (SELECT COUNT(*) FROM users) = 1
+                """.trimIndent())
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -38,9 +62,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "app_database"
                 )
-                    .fallbackToDestructiveMigration(
-                        dropAllTables = true
-                    )
+                    .addMigrations(MIGRATION_14_15)
                     .build()
                     .also { INSTANCE = it }
             }

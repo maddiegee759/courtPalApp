@@ -2,6 +2,7 @@ package com.example.courtpalapp.feature.matches
 
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,7 +19,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.room.withTransaction
 import com.example.courtpalapp.data.local.AppDatabase
+import com.example.courtpalapp.data.local.SessionManager
 import com.example.courtpalapp.data.local.toMatchEntity
+import com.example.courtpalapp.feature.profile.recordEarnedBadges
 import com.example.courtpalapp.domain.match.MatchSettings
 import com.example.courtpalapp.domain.match.SetScore
 import com.example.courtpalapp.domain.match.TennisScoring
@@ -37,6 +40,8 @@ fun ManualMatchScreen(
 ) {
     val context = LocalContext.current
     val database = remember(context) { AppDatabase.getDatabase(context) }
+    val sessionManager = remember(context) { SessionManager(context) }
+    val currentUserId by sessionManager.currentUserId.collectAsState()
     val scope = rememberCoroutineScope()
     var games by rememberSaveable {
         mutableStateOf(ArrayList(List(settings.bestOfSets * 2) { "" }))
@@ -122,6 +127,10 @@ fun ManualMatchScreen(
                     error = e.message
                     return@save
                 }
+                val ownerUserId = currentUserId ?: run {
+                    error = "Please log in before saving a match."
+                    return@save
+                }
                 val selectedUri = galleryPhoto
                 val selectedBitmap = cameraPhoto
                 saving = true
@@ -143,7 +152,8 @@ fun ManualMatchScreen(
                                 )
                                 val entity = completedScore.toMatchEntity(settings).copy(
                                     trackRallies = false,
-                                    photoUri = photoPath
+                                    photoUri = photoPath,
+                                    ownerUserId = ownerUserId
                                 )
                                 database.withTransaction {
                                     if (calendarEventId != null) {
@@ -159,6 +169,13 @@ fun ManualMatchScreen(
                             } catch (e: Exception) {
                                 photoPath?.let { deleteOwnedPhoto(context.filesDir, it) }
                                 throw e
+                            }
+                            // Badge recording is separate: its failure must never
+                            // roll back a saved result or remove its attached photo.
+                            try {
+                                recordEarnedBadges(database, ownerUserId)
+                            } catch (badgeError: Exception) {
+                                Log.w("CourtPalBadges", "Could not record match badges", badgeError)
                             }
                         }
                     } catch (e: CancellationException) {

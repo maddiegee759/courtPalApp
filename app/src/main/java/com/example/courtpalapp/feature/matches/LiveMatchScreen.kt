@@ -14,6 +14,7 @@ import com.example.courtpalapp.feature.matches.components.ScoreBoard
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.platform.LocalContext
 import com.example.courtpalapp.data.local.AppDatabase
+import com.example.courtpalapp.data.local.SessionManager
 
 @Composable
 fun LiveMatchScreen(
@@ -26,9 +27,9 @@ fun LiveMatchScreen(
     matchViewModel.initialise(settings)
     val context = LocalContext.current
 
-    val matchDao = remember(context) {
-        AppDatabase.getDatabase(context).matchDao()
-    }
+    val database = remember(context) { AppDatabase.getDatabase(context) }
+    val sessionManager = remember(context) { SessionManager(context) }
+    val currentUserId by sessionManager.currentUserId.collectAsState()
 
     val score = matchViewModel.score ?: return
     val history = matchViewModel.history
@@ -152,11 +153,13 @@ fun LiveMatchScreen(
 
             Button(
                 onClick = {
-                    matchViewModel.saveCompletedMatch(matchDao) {
-                        onMatchFinished(score)
+                    currentUserId?.let { userId ->
+                        matchViewModel.saveCompletedMatch(database, userId) {
+                            onMatchFinished(score)
+                        }
                     }
                 },
-                enabled = !matchViewModel.isSaving,
+                enabled = !matchViewModel.isSaving && currentUserId != null,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
@@ -243,15 +246,18 @@ fun LiveMatchScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        matchViewModel.saveUnfinishedMatch(
-                            database = AppDatabase.getDatabase(context),
-                            onSaved = {
-                                showQuitDialog = false
-                                onMatchQuit()
-                            }
-                        )
+                        currentUserId?.let { userId ->
+                            matchViewModel.saveUnfinishedMatch(
+                                database = database,
+                                ownerUserId = userId,
+                                onSaved = {
+                                    showQuitDialog = false
+                                    onMatchQuit()
+                                }
+                            )
+                        }
                     },
-                    enabled = !matchViewModel.isSaving
+                    enabled = !matchViewModel.isSaving && currentUserId != null
                 ) {
                     Text(
                         if (matchViewModel.isSaving) "Saving..."
@@ -310,10 +316,13 @@ fun LiveMatchScreen(
                 TextButton(
                     onClick = {
                         matchViewModel.dismissFinishDialog()
-                        matchViewModel.saveCompletedMatch(matchDao) {
-                            onMatchFinished(score)
+                        currentUserId?.let { userId ->
+                            matchViewModel.saveCompletedMatch(database, userId) {
+                                onMatchFinished(score)
+                            }
                         }
-                    }
+                    },
+                    enabled = !matchViewModel.isSaving && currentUserId != null
                 ) {
                     Text("Match History")
                 }

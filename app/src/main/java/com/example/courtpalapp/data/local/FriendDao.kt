@@ -65,6 +65,12 @@ interface FriendDao {
     fun getFriendCountForUser(userId: Long): Flow<Int>
 
     @Query("""
+        SELECT MIN(addedAt) FROM friends
+        WHERE ownerUserId = :userId OR friendUserId = :userId
+    """)
+    suspend fun getFirstFriendshipTime(userId: Long): Long?
+
+    @Query("""
         SELECT * FROM friends
         ORDER BY username COLLATE NOCASE ASC
     """)

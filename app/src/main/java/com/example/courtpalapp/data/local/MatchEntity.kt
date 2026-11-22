@@ -38,5 +38,8 @@ data class MatchEntity(
     val matchMode: String = "LIVE",
 
     val playedAt: Long = System.currentTimeMillis(),
-    val photoUri: String? = null
+    val photoUri: String? = null,
+
+    // Nullable only for matches saved before accounts owned their records.
+    val ownerUserId: Long? = null
 )

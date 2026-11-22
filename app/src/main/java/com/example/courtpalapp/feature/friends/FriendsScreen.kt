@@ -2,6 +2,7 @@ package com.example.courtpalapp.feature.friends
 
 import android.graphics.BitmapFactory
 import android.os.Build
+import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -22,11 +23,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.EditCalendar
 import androidx.compose.material.icons.filled.EmojiEvents
-import androidx.compose.material.icons.filled.EventBusy
 import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
@@ -66,14 +64,21 @@ import com.example.courtpalapp.common.formatUsername
 import com.example.courtpalapp.data.local.AppDatabase
 import com.example.courtpalapp.data.local.FriendDisplay
 import com.example.courtpalapp.data.local.FriendEntity
+import com.example.courtpalapp.data.local.FriendActivityEntity
+import com.example.courtpalapp.data.local.MatchEntity
 import com.example.courtpalapp.data.local.SessionManager
 import com.example.courtpalapp.feature.calendar.EventStatus
+import com.example.courtpalapp.feature.profile.recordEarnedBadges
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.Instant
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import org.json.JSONArray
 
 data class FriendMatchProposal(
     val id: Long,
@@ -85,22 +90,23 @@ data class FriendMatchProposal(
     val friendId: String?
 )
 
-enum class FriendActivityType {
-    MATCH_COMPLETED,
-    MATCH_CANCELLED,
-    MATCH_UPDATED,
-    BADGE_EARNED,
-    STREAK_MILESTONE
-}
+private sealed interface FriendFeedItem {
+    val ownerUserId: Long
+    val timestamp: Long
+    val stableKey: String
 
-data class FriendActivity(
-    val id: Long,
-    val friendName: String,
-    val description: String,
-    val date: String,
-    val type: FriendActivityType,
-    val photoUri: String? = null
-)
+    data class MatchPost(val match: MatchEntity) : FriendFeedItem {
+        override val ownerUserId: Long get() = requireNotNull(match.ownerUserId)
+        override val timestamp: Long get() = match.playedAt
+        override val stableKey: String get() = "match_${match.id}"
+    }
+
+    data class BadgePost(val badge: FriendActivityEntity) : FriendFeedItem {
+        override val ownerUserId: Long get() = requireNotNull(badge.ownerUserId)
+        override val timestamp: Long get() = badge.timestamp
+        override val stableKey: String get() = "badge_${badge.id}"
+    }
+}
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -132,6 +138,9 @@ fun FriendsScreen(
         database.userDao()
     }
 
+    val matchDao = remember(database) { database.matchDao() }
+    val activityDao = remember(database) { database.friendActivityDao() }
+
     val friendsFlow = remember(currentUserId, friendDao) {
         currentUserId?.let { userId ->
             friendDao.observeFriendDisplaysForUser(userId)
@@ -144,6 +153,42 @@ fun FriendsScreen(
         }
     } else {
         emptyList()
+    }
+
+    val friendUserIds = remember(friends) { friends.map { it.friendUserId } }
+    val friendsById = remember(friends) { friends.associateBy { it.friendUserId } }
+
+    val friendMatches = key(currentUserId, friendUserIds) {
+        remember(friendUserIds, matchDao) {
+            matchDao.getCompletedMatchesForUsers(friendUserIds)
+        }.collectAsState(initial = emptyList()).value
+    }
+
+    val earnedBadges = key(currentUserId, friendUserIds) {
+        remember(friendUserIds, activityDao) {
+            activityDao.getBadgeActivitiesForUsers(friendUserIds)
+        }.collectAsState(initial = emptyList()).value
+    }
+
+    // Populate previously earned badges, and react to newly saved friend matches.
+    LaunchedEffect(currentUserId, friendUserIds, friendMatches) {
+        if (currentUserId != null) {
+            friendUserIds.forEach { friendId ->
+                try {
+                    recordEarnedBadges(database, friendId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Log.w("CourtPalBadges", "Could not refresh friend badges", error)
+                }
+            }
+        }
+    }
+
+    val friendActivities: List<FriendFeedItem> = remember(friendMatches, earnedBadges) {
+        (friendMatches.map { FriendFeedItem.MatchPost(it) } +
+            earnedBadges.map { FriendFeedItem.BadgePost(it) })
+            .sortedWith(compareByDescending<FriendFeedItem> { it.timestamp }.thenBy { it.stableKey })
     }
 
     var showAddFriendDialog by remember {
@@ -224,8 +269,6 @@ fun FriendsScreen(
                 event.friendId == currentUserId.toString() &&
                 event.ownerUserId != currentUserId
     }
-
-    val friendActivities = emptyList<FriendActivity>()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background
@@ -538,10 +581,11 @@ fun FriendsScreen(
 
                 items(
                     items = friendActivities,
-                    key = { "activity_${it.id}" }
+                    key = { it.stableKey }
                 ) { activity ->
-
-                    FriendActivityCard(activity)
+                    friendsById[activity.ownerUserId]?.let { friend ->
+                        FriendActivityCard(activity, friend)
+                    }
                 }
             }
         }
@@ -618,6 +662,17 @@ fun FriendsScreen(
                                                 avatarUri = targetUser.avatarUri
                                             )
                                         )
+
+                                        // The friendship is already saved; badge recording
+                                        // should not turn a successful add into an error.
+                                        try {
+                                            recordEarnedBadges(database, ownerId)
+                                            recordEarnedBadges(database, targetUser.id)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (badgeError: Exception) {
+                                            Log.w("CourtPalBadges", "Could not record friend badge", badgeError)
+                                        }
 
                                         showAddFriendDialog = false
                                         addFriendError = null
@@ -785,27 +840,12 @@ private fun MatchProposalCard(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 private fun FriendActivityCard(
-    activity: FriendActivity
+    post: FriendFeedItem,
+    friend: FriendDisplay
 ) {
-    val icon = when (activity.type) {
-        FriendActivityType.MATCH_COMPLETED ->
-            Icons.Default.SportsTennis
-
-        FriendActivityType.MATCH_CANCELLED ->
-            Icons.Default.EventBusy
-
-        FriendActivityType.MATCH_UPDATED ->
-            Icons.Default.EditCalendar
-
-        FriendActivityType.BADGE_EARNED ->
-            Icons.Default.EmojiEvents
-
-        FriendActivityType.STREAK_MILESTONE ->
-            Icons.Default.LocalFireDepartment
-    }
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -813,41 +853,135 @@ private fun FriendActivityCard(
             containerColor = MaterialTheme.colorScheme.surface
         )
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.Top
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary
-            )
-
-            Column(
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = activity.friendName,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+                FriendAvatar(friend.avatarUri)
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = formatUsername(friend.username),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = Instant.ofEpochMilli(post.timestamp)
+                            .atZone(ZoneId.systemDefault())
+                            .format(DateTimeFormatter.ofPattern("d MMM yyyy · HH:mm", Locale.UK)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
-                Text(
-                    text = activity.description,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+            when (post) {
+                is FriendFeedItem.MatchPost -> {
+                    val match = post.match
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SportsTennis,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Completed a tennis match",
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
 
-                Text(
-                    text = activity.date,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text(
+                            text = if (match.winner == 1) "Match won" else "Match lost",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text("${match.player1Name} vs ${match.player2Name}")
+                        Text(
+                            text = "Sets: ${formatMatchSets(match)}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
 
-                // TODO: Display photo when photo support is added.
+                is FriendFeedItem.BadgePost -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.EmojiEvents,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text("Earned a new badge!", fontWeight = FontWeight.SemiBold)
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = badgeTitle(post.badge.badgeId),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = post.badge.description,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
             }
         }
+    }
+}
+
+private fun badgeTitle(id: String?): String = when (id) {
+    "first_match" -> "First Match"
+    "social_butterfly" -> "Social Butterfly"
+    "getting_started" -> "Getting Started"
+    "court_regular" -> "Court Regular"
+    "match_master" -> "Match Master"
+    "habit_builder" -> "Habit Builder"
+    "consistent_player" -> "Consistent Player"
+    "on_fire" -> "On Fire"
+    "long_game" -> "Long Game"
+    "early_riser" -> "Early Riser"
+    "night_owl" -> "Night Owl"
+    "organiser" -> "Organiser"
+    "true_self" -> "True Self"
+    else -> "Achievement"
+}
+
+private fun formatMatchSets(match: MatchEntity): String {
+    return try {
+        val json = JSONArray(match.completedSetsJson)
+        (0 until json.length()).mapNotNull { index ->
+            json.optJSONObject(index)?.let { set ->
+                "${set.optInt("player1Games")}–${set.optInt("player2Games")}" 
+            }
+        }.takeIf { it.isNotEmpty() }?.joinToString(" | ")
+            ?: "${match.player1Sets}–${match.player2Sets}"
+    } catch (_: Exception) {
+        "${match.player1Sets}–${match.player2Sets}"
     }
 }
 
@@ -873,7 +1007,7 @@ private fun EmptyFriendsActivity() {
         )
 
         Text(
-            text = "Your friends' matches, badges and streaks will appear here.",
+            text = "Your friends' completed matches and earned badges will appear here.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

@@ -1,5 +1,6 @@
 package com.example.courtpalapp.feature.matches
 
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -9,13 +10,14 @@ import com.example.courtpalapp.domain.match.MatchSettings
 import com.example.courtpalapp.domain.match.TennisScore
 import com.example.courtpalapp.domain.match.TennisScoring
 import androidx.lifecycle.viewModelScope
-import com.example.courtpalapp.data.local.MatchDao
 import com.example.courtpalapp.data.local.toMatchEntity
+import com.example.courtpalapp.feature.profile.recordEarnedBadges
 import kotlinx.coroutines.launch
 import com.example.courtpalapp.data.local.ActiveMatchDao
 import com.example.courtpalapp.data.local.ActiveMatchEntity
 import com.example.courtpalapp.data.local.ActiveMatchJson
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import androidx.room.withTransaction
 import com.example.courtpalapp.data.local.AppDatabase
@@ -137,7 +139,8 @@ class LiveMatchViewModel : ViewModel() {
 
 
     fun saveCompletedMatch(
-        matchDao: MatchDao,
+        database: AppDatabase,
+        ownerUserId: Long,
         onSaved: (Long) -> Unit
     ) {
         val currentScore = score ?: return
@@ -162,9 +165,19 @@ class LiveMatchViewModel : ViewModel() {
 
                 // Save the completed match to Match History.
                 val entity = currentScore.toMatchEntity(currentSettings)
-                val savedId = matchDao.insertMatch(entity)
+                    .copy(ownerUserId = ownerUserId)
+                val savedId = database.matchDao().insertMatch(entity)
 
                 savedMatchId = savedId
+
+                try {
+                    recordEarnedBadges(database, ownerUserId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    // A badge write must not cause a saved match to be saved twice.
+                    Log.w("CourtPalBadges", "Could not record match badges", error)
+                }
 
                 // Remove only this completed match from active_matches.
                 if (completedActiveMatchId != null) {
@@ -184,6 +197,7 @@ class LiveMatchViewModel : ViewModel() {
 
     fun saveUnfinishedMatch(
         database: AppDatabase,
+        ownerUserId: Long,
         onSaved: (Long) -> Unit
     ) {
         val currentScore = score ?: return
@@ -205,7 +219,7 @@ class LiveMatchViewModel : ViewModel() {
                     val entity = currentScore.toMatchEntity(
                         settings = currentSettings,
                         allowUnfinished = true
-                    )
+                    ).copy(ownerUserId = ownerUserId)
 
                     val id = database.matchDao().insertMatch(entity)
 

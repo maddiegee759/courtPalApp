@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.courtpalapp.data.local.AppDatabase
 import com.example.courtpalapp.data.local.MatchEntity
+import com.example.courtpalapp.data.local.SessionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -32,9 +33,21 @@ fun MatchHistoryScreen(
     val matchDao = remember(context) {
         AppDatabase.getDatabase(context).matchDao()
     }
-    val matches by remember(matchDao) {
-        matchDao.getAllMatches()
-    }.collectAsState(initial = emptyList())
+    val sessionManager = remember(context) { SessionManager(context) }
+    val currentUserId by sessionManager.currentUserId.collectAsState()
+
+    // A fresh Flow and keyed composition prevent one account's matches from
+    // briefly appearing when someone switches accounts on the same device.
+    val matchesFlow = remember(matchDao, currentUserId) {
+        currentUserId?.let { matchDao.getMatchesForUser(it) }
+    }
+    val matches = if (matchesFlow != null) {
+        key(currentUserId) {
+            matchesFlow.collectAsState(initial = emptyList()).value
+        }
+    } else {
+        emptyList()
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp)
@@ -46,14 +59,20 @@ fun MatchHistoryScreen(
         )
         Spacer(modifier = Modifier.height(16.dp))
 
-        if (matches.isEmpty()) {
-            Text(
+        when {
+            currentUserId == null -> Text(
+                text = "Log in to view your match history.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            matches.isEmpty() -> Text(
                 text = "No matches saved yet.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-        } else {
-            LazyColumn(
+
+            else -> LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
@@ -80,8 +99,7 @@ private fun MatchHistoryCard(
         else -> "Unknown"
     }
 
-    // The details screen stores an absolute path to a private photo file.
-    // Decode a downsampled image so scrolling the match list stays responsive.
+    // Downsample photos to avoid decoding full-resolution files while scrolling.
     val photoBitmap by produceState<Bitmap?>(initialValue = null, key1 = match.photoUri) {
         value = null
         value = withContext(Dispatchers.IO) {
@@ -127,11 +145,7 @@ private fun MatchHistoryCard(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = if (match.isCompleted) {
-                    "Winner: $winnerName"
-                } else {
-                    "Match unfinished"
-                },
+                text = if (match.isCompleted) "Winner: $winnerName" else "Match unfinished",
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (match.isCompleted) {
                     MaterialTheme.colorScheme.primary
@@ -140,7 +154,6 @@ private fun MatchHistoryCard(
                 }
             )
 
-            // Show the match photo directly in the history card when available.
             if (photoBitmap != null) {
                 Image(
                     bitmap = photoBitmap!!.asImageBitmap(),
@@ -203,17 +216,8 @@ private fun formatCompletedSets(json: String): String {
 
 private fun formatMatchSets(match: MatchEntity): String {
     val completed = formatCompletedSets(match.completedSetsJson)
-
-    if (match.isCompleted) {
-        return completed
-    }
+    if (match.isCompleted) return completed
 
     val currentSet = "${match.player1Games}–${match.player2Games}"
-
-    return if (completed == "Not recorded") {
-        currentSet
-    } else {
-        "$completed  |  $currentSet"
-    }
+    return if (completed == "Not recorded") currentSet else "$completed  |  $currentSet"
 }
-

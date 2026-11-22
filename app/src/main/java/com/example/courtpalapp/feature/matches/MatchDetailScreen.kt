@@ -20,8 +20,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.courtpalapp.data.local.AppDatabase
 import com.example.courtpalapp.data.local.MatchEntity
+import com.example.courtpalapp.data.local.SessionManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import java.io.File
@@ -38,18 +42,22 @@ fun MatchDetailScreen(
 ) {
     val context = LocalContext.current
     val dao = remember(context) { AppDatabase.getDatabase(context).matchDao() }
+    val sessionManager = remember(context) { SessionManager(context) }
+    val currentUserId by sessionManager.currentUserId.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    var match by remember(matchId) { mutableStateOf<MatchEntity?>(null) }
-    var loading by remember(matchId) { mutableStateOf(true) }
-    var showDeleteConfirmation by remember { mutableStateOf(false) }
-    var photoBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var match by remember(matchId, currentUserId) { mutableStateOf<MatchEntity?>(null) }
+    var loading by remember(matchId, currentUserId) { mutableStateOf(currentUserId != null) }
+    var showDeleteConfirmation by remember(matchId, currentUserId) { mutableStateOf(false) }
+    var photoBitmap by remember(matchId, currentUserId) { mutableStateOf<Bitmap?>(null) }
 
-    LaunchedEffect(matchId) {
-        match = withContext(Dispatchers.IO) { dao.getMatchById(matchId) }
+    LaunchedEffect(matchId, currentUserId) {
+        match = currentUserId?.let { userId ->
+            withContext(Dispatchers.IO) { dao.getMatchByIdForUser(matchId, userId) }
+        }
         loading = false
     }
-    LaunchedEffect(match?.photoUri) {
+    LaunchedEffect(matchId, currentUserId, match?.photoUri) {
         val path = match?.photoUri
         photoBitmap = withContext(Dispatchers.IO) {
             path?.let { BitmapFactory.decodeFile(it) }
@@ -57,18 +65,44 @@ fun MatchDetailScreen(
     }
 
     fun storePhoto(source: suspend () -> String?) {
+        val userId = currentUserId ?: return
+        if (match?.ownerUserId != userId) return
+
         scope.launch {
+            var newPhotoPath: String? = null
+            var photoAttached = false
             try {
                 val path = withContext(Dispatchers.IO) { source() } ?: return@launch
-                val previous = match?.photoUri
-                dao.updateMatchPhoto(matchId, path)
-                match = dao.getMatchById(matchId)
+                newPhotoPath = path
+
+                if (sessionManager.currentUserId.first() != userId) {
+                    snackbar.showSnackbar("Please log in to edit this match")
+                    return@launch
+                }
+
+                val existing = dao.getMatchByIdForUser(matchId, userId)
+                if (existing == null || dao.updateMatchPhotoForUser(matchId, userId, path) != 1) {
+                    snackbar.showSnackbar("Match not found")
+                    return@launch
+                }
+                photoAttached = true
+                match = dao.getMatchByIdForUser(matchId, userId)
+                val previous = existing.photoUri
                 if (previous != null && previous != path) {
                     withContext(Dispatchers.IO) { deleteOwnedPhoto(context.filesDir, previous) }
                 }
                 snackbar.showSnackbar("Match photo saved")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 snackbar.showSnackbar("Could not save photo")
+            } finally {
+                val orphanPath = newPhotoPath
+                if (!photoAttached && orphanPath != null) {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        deleteOwnedPhoto(context.filesDir, orphanPath)
+                    }
+                }
             }
         }
     }
@@ -141,15 +175,25 @@ fun MatchDetailScreen(
                 }
                 if (current.photoUri != null) {
                     TextButton(onClick = {
-                        scope.launch {
-                            try {
-                                dao.updateMatchPhoto(matchId, null)
-                                match = dao.getMatchById(matchId)
-                                withContext(Dispatchers.IO) {
-                                    deleteOwnedPhoto(context.filesDir, current.photoUri)
+                        currentUserId?.let { userId ->
+                            scope.launch {
+                                try {
+                                    if (sessionManager.currentUserId.first() != userId) return@launch
+                                    val latest = dao.getMatchByIdForUser(matchId, userId)
+                                    val previousPhoto = latest?.photoUri ?: return@launch
+                                    if (dao.updateMatchPhotoForUser(matchId, userId, null) == 1) {
+                                        match = dao.getMatchByIdForUser(matchId, userId)
+                                        withContext(Dispatchers.IO) {
+                                            deleteOwnedPhoto(context.filesDir, previousPhoto)
+                                        }
+                                    } else {
+                                        snackbar.showSnackbar("Match not found")
+                                    }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (e: Exception) {
+                                    snackbar.showSnackbar("Could not remove photo")
                                 }
-                            } catch (e: Exception) {
-                                snackbar.showSnackbar("Could not remove photo")
                             }
                         }
                     }) { Text("Remove photo") }
@@ -171,16 +215,35 @@ fun MatchDetailScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteConfirmation = false
-                    scope.launch {
-                        try {
-                            val path = match?.photoUri
-                            dao.deleteMatchById(matchId)
-                            withContext(Dispatchers.IO) {
-                                if (path != null) deleteOwnedPhoto(context.filesDir, path)
+                    currentUserId?.let { userId ->
+                        scope.launch {
+                            try {
+                                if (sessionManager.currentUserId.first() != userId) {
+                                    snackbar.showSnackbar("Please log in to delete this match")
+                                    return@launch
+                                }
+
+                                val existing = dao.getMatchByIdForUser(matchId, userId)
+                                if (existing == null) {
+                                    snackbar.showSnackbar("Match not found")
+                                    return@launch
+                                }
+
+                                if (dao.deleteMatchByIdForUser(matchId, userId) == 1) {
+                                    withContext(Dispatchers.IO) {
+                                        existing.photoUri?.let { path ->
+                                            deleteOwnedPhoto(context.filesDir, path)
+                                        }
+                                    }
+                                    onBack()
+                                } else {
+                                    snackbar.showSnackbar("Match not found")
+                                }
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (e: Exception) {
+                                snackbar.showSnackbar("Could not delete match")
                             }
-                            onBack()
-                        } catch (e: Exception) {
-                            snackbar.showSnackbar("Could not delete match")
                         }
                     }
                 }) { Text("Delete", color = MaterialTheme.colorScheme.error) }

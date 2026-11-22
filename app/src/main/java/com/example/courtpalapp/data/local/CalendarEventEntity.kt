@@ -1,6 +1,7 @@
 package com.example.courtpalapp.data.local
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.PrimaryKey
 
 @Entity(tableName = "calendar_events")
@@ -23,5 +24,7 @@ data class CalendarEventEntity(
     val proposedEndTime: String? = null,
     val proposedLocation: String? = null,
     val proposedByUserId: Long? = null,
-    val hasStarted: Boolean = false
+    val hasStarted: Boolean = false,
+    @ColumnInfo(defaultValue = "0")
+    val createdAt: Long = System.currentTimeMillis()
 )

@@ -2,6 +2,7 @@ package com.example.courtpalapp.feature.profile
 
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.util.Log
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.Image
@@ -41,6 +42,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import com.example.courtpalapp.common.formatUsername
 import com.example.courtpalapp.data.local.AppDatabase
 import com.example.courtpalapp.ui.theme.PrimaryGreen
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -77,9 +80,8 @@ fun ProfileScreen(
     // Match statistics from Room
     val context = LocalContext.current
 
-    val userDao = remember(context) {
-        AppDatabase.getDatabase(context).userDao()
-    }
+    val database = remember(context) { AppDatabase.getDatabase(context) }
+    val userDao = remember(database) { database.userDao() }
 
     val currentUser by remember(userDao, currentUserId) {
         userDao.observeUser(currentUserId)
@@ -101,28 +103,22 @@ fun ProfileScreen(
         }
     }
 
-    val matchDao = remember(context) {
-        AppDatabase.getDatabase(context).matchDao()
-    }
+    val matchDao = remember(database) { database.matchDao() }
 
-    val friendDao = remember(context) {
-        AppDatabase.getDatabase(context).friendDao()
-    }
+    val friendDao = remember(database) { database.friendDao() }
 
     val friends by remember(friendDao, currentUserId) {
         friendDao.observeFriendDisplaysForUser(currentUserId)
     }.collectAsState(initial = emptyList())
 
-    val eventDao = remember(context) {
-        AppDatabase.getDatabase(context).calendarEventDao()
-    }
+    val eventDao = remember(database) { database.calendarEventDao() }
 
-    val calendarEvents by remember(eventDao) {
-        eventDao.getAllEvents()
+    val calendarEvents by remember(eventDao, currentUserId) {
+        eventDao.getEventsForUser(currentUserId)
     }.collectAsState(initial = emptyList())
 
-    val completedMatches by remember(matchDao) {
-        matchDao.getCompletedMatches()
+    val completedMatches by remember(matchDao, currentUserId) {
+        matchDao.getCompletedMatchesForUser(currentUserId)
     }.collectAsState(initial = emptyList())
 
     val stats = calculateMatchStats(completedMatches)
@@ -139,17 +135,27 @@ fun ProfileScreen(
             hasFriends = friends.isNotEmpty(),
 
             hasSentCalendarRequest = calendarEvents.any { event ->
-                !event.friendId.isNullOrBlank()
+                event.ownerUserId == currentUserId && !event.friendId.isNullOrBlank()
             },
 
             hasSoloCalendarEvent = calendarEvents.any { event ->
-                event.friendId.isNullOrBlank()
+                event.ownerUserId == currentUserId && event.friendId.isNullOrBlank()
             }
         )
     }
 
     val unlockedBadges = badges.filter { it.unlocked }
     val lockedBadges = badges.filter { !it.unlocked }
+
+    LaunchedEffect(currentUserId, badges) {
+        try {
+            recordEarnedBadges(database, currentUserId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.w("CourtPalBadges", "Could not record earned badges", error)
+        }
+    }
 
     val streakColor = when {
         weeklyStreak == 0 ->
