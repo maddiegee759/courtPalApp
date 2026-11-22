@@ -20,6 +20,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.Role
+import com.example.courtpalapp.data.local.UserPreferences
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,7 +30,8 @@ fun MatchSetupScreen(
     friends: List<Pair<String, String>> = emptyList(),
     initialPlayer2Name: String = "Guest",
     initialPlayer2Id: String? = null,
-    errorMessage: String? = null
+    errorMessage: String? = null,
+    defaultPreferences: UserPreferences = UserPreferences()
 ) {
     var player1Name by rememberSaveable {
         mutableStateOf("You")
@@ -44,7 +46,7 @@ fun MatchSetupScreen(
     }
 
     var bestOfSets by rememberSaveable {
-        mutableIntStateOf(3)
+        mutableIntStateOf(defaultPreferences.matchFormat.toIntOrNull() ?: 3)
     }
 
     var gamesPerSet by rememberSaveable {
@@ -60,7 +62,7 @@ fun MatchSetupScreen(
     }
 
     var trackRallies by rememberSaveable {
-        mutableStateOf(false)
+        mutableStateOf(defaultPreferences.rallyTracking)
     }
 
     var coinFlipEnabled by rememberSaveable {
@@ -72,7 +74,12 @@ fun MatchSetupScreen(
     }
 
     var matchMode by rememberSaveable {
-        mutableStateOf(MatchMode.LIVE)
+        mutableStateOf(
+            if (defaultPreferences.scoringMode == "MANUAL")
+                MatchMode.MANUAL
+            else
+                MatchMode.LIVE
+        )
     }
 
     var showAdvanced by rememberSaveable {

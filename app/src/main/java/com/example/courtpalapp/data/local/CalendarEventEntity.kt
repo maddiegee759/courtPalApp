@@ -15,11 +15,13 @@ data class CalendarEventEntity(
     val friendId: String? = null,
     val googleEventId: String? = null,
     val friendName: String? = null,
+    val ownerUserId: Long? = null,
     // proposed values are separate so the confirmed event remains unchanged
     val proposedTitle: String? = null,
     val proposedDate: String? = null,
     val proposedStartTime: String? = null,
     val proposedEndTime: String? = null,
     val proposedLocation: String? = null,
+    val proposedByUserId: Long? = null,
     val hasStarted: Boolean = false
 )

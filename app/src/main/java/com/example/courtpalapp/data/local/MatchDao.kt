@@ -21,4 +21,7 @@ interface MatchDao {
 
     @Query("UPDATE matches SET photoUri = :photoUri WHERE id = :matchId")
     suspend fun updateMatchPhoto(matchId: Long, photoUri: String?)
+
+    @Query("SELECT * FROM matches WHERE isCompleted = 1 ORDER BY playedAt DESC")
+    fun getCompletedMatches(): Flow<List<MatchEntity>>
 }

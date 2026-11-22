@@ -4,15 +4,34 @@ import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.os.Build
 import androidx.annotation.RequiresApi
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.example.courtpalapp.common.formatUsername
 import com.example.courtpalapp.data.local.CalendarEventEntity
 import java.time.LocalDate
 import java.time.LocalTime
@@ -100,7 +119,11 @@ fun AddEventDialog(
                     onExpandedChange = { if (!isEditing) dropdownExpanded = it }
                 ) {
                     OutlinedTextField(
-                        value = friendName,
+                        value = if (selectedFriend != null) {
+                            "@${friendName.removePrefix("@")}"
+                        } else {
+                            friendName
+                        },
                         onValueChange = { typed ->
                             friendName = typed
                             selectedFriend = null
@@ -121,7 +144,7 @@ fun AddEventDialog(
                     ) {
                         matchingFriends.forEach { friend ->
                             DropdownMenuItem(
-                                text = { Text("@${friend.username}") },
+                                text = { Text(formatUsername(friend.username)) },
                                 onClick = {
                                     friendName = friend.username
                                     selectedFriend = friend

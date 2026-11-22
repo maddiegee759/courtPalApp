@@ -60,4 +60,5 @@ dependencies {
     add("ksp", libs.androidx.room.compiler)
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("com.google.code.gson:gson:2.13.2")
+    implementation("androidx.datastore:datastore-preferences:1.1.7")
 }

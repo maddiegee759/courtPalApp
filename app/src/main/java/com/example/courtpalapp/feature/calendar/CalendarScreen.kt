@@ -1,10 +1,29 @@
 package com.example.courtpalapp.feature.calendar
 
+import android.app.Activity
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import android.content.Context
+import android.content.ContextWrapper
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -16,41 +35,57 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import java.time.LocalDate
-import java.time.YearMonth
-import java.time.format.DateTimeFormatter
-import java.util.Locale
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.platform.LocalContext
+import com.example.courtpalapp.api.calendar.CalendarAuthManager
+import com.example.courtpalapp.api.calendar.GoogleCalendarManager
+import com.example.courtpalapp.common.formatDate
+import com.example.courtpalapp.common.formatDateTime
+import com.example.courtpalapp.common.formatUsername
 import com.example.courtpalapp.data.local.AppDatabase
+import com.example.courtpalapp.data.local.CalendarEventEntity
+import com.example.courtpalapp.data.local.SessionManager
 import com.example.courtpalapp.data.local.toCalendarEvent
 import com.example.courtpalapp.data.local.toEntity
 import kotlinx.coroutines.launch
-import android.app.DatePickerDialog
-import android.app.TimePickerDialog
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.IntentSenderRequest
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.runtime.saveable.rememberSaveable
-import com.example.courtpalapp.api.calendar.CalendarAuthManager
-import com.example.courtpalapp.api.calendar.GoogleCalendarManager
-import com.example.courtpalapp.data.local.CalendarEventEntity
+import java.time.LocalDate
 import java.time.LocalTime
+import java.time.YearMonth
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 enum class EventStatus {
     CONFIRMED,
@@ -99,7 +134,8 @@ private fun Context.findActivity(): Activity {
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun CalendarScreen(
-    selectedEventId: Long? = null
+    selectedEventId: Long? = null,
+    requestedDate: String? = null
 ) {
 
     val today = remember { LocalDate.now() }
@@ -116,19 +152,82 @@ fun CalendarScreen(
         mutableStateOf<CalendarEventEntity?>(null)
     }
 
+    LaunchedEffect(requestedDate) {
+        if (requestedDate != null) {
+            val targetDate = LocalDate.parse(requestedDate)
+            selectedDate = targetDate
+            displayedMonth = YearMonth.from(targetDate)
+        }
+    }
+
     // room
     val context = LocalContext.current
+
+    val sessionManager = remember(context) {
+        SessionManager(context)
+    }
+
+    val currentUserId by sessionManager.currentUserId.collectAsState()
+
     val database = remember(context) {
         AppDatabase.getDatabase(context)
     }
+
     val eventDao = remember(database) {
         database.calendarEventDao()
     }
 
+    val friendDao = remember(database) {
+        database.friendDao()
+    }
+
+    val userDao = remember(database) {
+        database.userDao()
+    }
+
+    val friendsFlow = remember(currentUserId, friendDao) {
+        currentUserId?.let { userId ->
+            friendDao.getFriendsForUser(userId)
+        }
+    }
+
+    val friends = if (friendsFlow != null) {
+        key(currentUserId) {
+            friendsFlow.collectAsState(initial = emptyList()).value
+        }
+    } else {
+        emptyList()
+    }
+
     val coroutineScope = rememberCoroutineScope()
 
-    val savedEvents by eventDao.getAllEvents()
-        .collectAsState(initial = emptyList())
+    val eventsFlow = remember(currentUserId, eventDao) {
+        currentUserId?.let { userId ->
+            eventDao.getEventsForUser(userId)
+        }
+    }
+
+    val savedEvents = if (eventsFlow != null) {
+        key(currentUserId) {
+            eventsFlow.collectAsState(initial = emptyList()).value
+        }
+    } else {
+        emptyList()
+    }
+
+    val ownerUsernames = remember(savedEvents) {
+        mutableStateMapOf<Long, String>()
+    }
+
+    LaunchedEffect(savedEvents, userDao) {
+        savedEvents.mapNotNull { it.ownerUserId }
+            .distinct()
+            .forEach { ownerId ->
+                userDao.getUserById(ownerId)?.let { user ->
+                    ownerUsernames[ownerId] = user.username
+                }
+            }
+    }
 
     val events = savedEvents.map { it.toCalendarEvent() }
 
@@ -220,20 +319,38 @@ fun CalendarScreen(
                         )
                     }
                     GoogleCalendarAction.DELETE -> {
+                        val local = eventDao.getEventById(action.roomEventId)
+                            ?: throw IllegalStateException("Event no longer exists")
+
+                        val userId = currentUserId
+                            ?: throw IllegalStateException("No active user")
+
+                        if (
+                            local.isLinkedCourtPalFriend() &&
+                            local.ownerUserId != userId
+                        ) {
+                            throw IllegalStateException(
+                                "Only the event creator can delete this match from Google Calendar"
+                            )
+                        }
+
                         googleCalendarManager.deleteEvent(
                             accessToken = accessToken,
                             googleEventId = requireNotNull(action.googleEventId)
                         )
-                        // Only remove the local event after Google confirms deletion.
-                        eventDao.getEventById(action.roomEventId)?.let { local ->
-                            if (local.isLinkedCourtPalFriend() && local.status != EventStatus.CANCELLED.name) {
-                                eventDao.updateEvent(local.copy(
+
+                        if (
+                            local.isLinkedCourtPalFriend() &&
+                            local.status != EventStatus.CANCELLED.name
+                        ) {
+                            eventDao.updateEvent(
+                                local.copy(
                                     status = EventStatus.CANCELLED.name,
                                     googleEventId = null
-                                ))
-                            } else {
-                                eventDao.deleteEvent(local)
-                            }
+                                )
+                            )
+                        } else {
+                            eventDao.deleteEvent(local)
                         }
                     }
                 }
@@ -419,12 +536,131 @@ fun CalendarScreen(
                     ) {
                         EventCard(
                             event = entity.toCalendarEvent(),
-                            friendName = entity.displayFriendName()
+                            friendName = entity.displayParticipantName(
+                                currentUserId = currentUserId,
+                                ownerUsername = entity.ownerUserId?.let { ownerUsernames[it] }
+                            )
                         )
 
                         if (entity.proposedTitle != null) {
-                            Text("Amendment awaiting approval (original match remains confirmed)",
-                                style = MaterialTheme.typography.bodySmall)
+
+                            val isIncomingAmendment =
+                                currentUserId != null &&
+                                        entity.proposedByUserId != null &&
+                                        entity.proposedByUserId != currentUserId &&
+                                        (
+                                                entity.ownerUserId == currentUserId ||
+                                                        entity.friendId == currentUserId.toString()
+                                                )
+
+                            Text(
+                                text = if (isIncomingAmendment) {
+                                    "Amendment awaiting your approval"
+                                } else {
+                                    "Amendment awaiting friend's approval"
+                                },
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+
+                            Text(
+                                text = "Current: ${
+                                    formatDateTime(entity.date, entity.startTime)
+                                }",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+
+                            Text(
+                                text = "Proposed: ${
+                                    formatDateTime(
+                                        entity.proposedDate ?: entity.date,
+                                        entity.proposedStartTime ?: entity.startTime
+                                    )
+                                }",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+
+                            Text(
+                                text = "Proposed location: ${
+                                    entity.proposedLocation ?: entity.location
+                                }",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+
+                            Text(
+                                text = "Original match remains confirmed",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            if (isIncomingAmendment) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                val userId = currentUserId ?: return@launch
+
+                                                try {
+                                                    val updated = eventDao.acceptAmendment(
+                                                        eventId = entity.id,
+                                                        currentUserId = userId
+                                                    )
+
+                                                    if (updated == 1) {
+                                                        snackbarHostState.showSnackbar(
+                                                            "Amendment accepted"
+                                                        )
+                                                    } else {
+                                                        snackbarHostState.showSnackbar(
+                                                            "Amendment can no longer be accepted"
+                                                        )
+                                                    }
+                                                } catch (e: Exception) {
+                                                    snackbarHostState.showSnackbar(
+                                                        "Could not accept amendment"
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Accept")
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                val userId = currentUserId ?: return@launch
+
+                                                try {
+                                                    val updated = eventDao.declineAmendment(
+                                                        eventId = entity.id,
+                                                        currentUserId = userId
+                                                    )
+
+                                                    snackbarHostState.showSnackbar(
+                                                        if (updated == 1) {
+                                                            "Amendment declined"
+                                                        } else {
+                                                            "Amendment can no longer be declined"
+                                                        }
+                                                    )
+                                                } catch (e: Exception) {
+                                                    snackbarHostState.showSnackbar(
+                                                        "Could not decline amendment"
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Decline")
+                                    }
+                                }
+                            }
                         }
                         if (entity.status == EventStatus.CANCELLED.name) {
                             OutlinedButton(
@@ -436,7 +672,21 @@ fun CalendarScreen(
                             ) {
                                 Text("Delete permanently", color = MaterialTheme.colorScheme.error)
                             }
-                        } else {
+                        } else if (
+                            (
+                                    entity.status != EventStatus.PENDING.name ||
+                                            entity.ownerUserId == currentUserId
+                                    ) &&
+                            !(
+                                    entity.proposedTitle != null &&
+                                            entity.proposedByUserId != null &&
+                                            entity.proposedByUserId != currentUserId &&
+                                            (
+                                                    entity.ownerUserId == currentUserId ||
+                                                            entity.friendId == currentUserId?.toString()
+                                                    )
+                                    )
+                        ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -444,7 +694,10 @@ fun CalendarScreen(
                                 OutlinedButton(
                                     onClick = { eventToEdit = entity },
                                     modifier = Modifier.weight(1f)
-                                ) { Text("Edit") }
+                                ) {
+                                    Text("Edit")
+                                }
+
                                 OutlinedButton(
                                     onClick = {
                                         eventToDelete = entity
@@ -459,10 +712,22 @@ fun CalendarScreen(
 
                         if (
                             entity.status == EventStatus.PENDING.name &&
-                            entity.isLinkedCourtPalFriend()
+                            entity.isLinkedCourtPalFriend() &&
+                            entity.friendId == currentUserId?.toString() &&
+                            entity.ownerUserId != currentUserId
                         ) {
                             Text(
-                                text = "Proposed to ${entity.displayFriendName()}",
+                                text = if (entity.ownerUserId == currentUserId) {
+                                    "Proposed to ${entity.displayParticipantName(
+                                        currentUserId,
+                                        entity.ownerUserId?.let { ownerUsernames[it] }
+                                    )}"
+                                } else {
+                                    "Proposal from ${entity.displayParticipantName(
+                                        currentUserId,
+                                        entity.ownerUserId?.let { ownerUsernames[it] }
+                                    )}"
+                                },
                                 style = MaterialTheme.typography.bodySmall
                             )
 
@@ -474,14 +739,22 @@ fun CalendarScreen(
                                     onClick = {
                                         coroutineScope.launch {
                                             try {
-                                                eventDao.updateEventStatus(
-                                                    entity.id,
-                                                    EventStatus.CONFIRMED.name
+                                                val userId = currentUserId ?: return@launch
+
+                                                val updated = eventDao.acceptProposal(
+                                                    eventId = entity.id,
+                                                    currentUserId = userId
                                                 )
 
-                                                acceptedEventToSync = entity.copy(
-                                                    status = EventStatus.CONFIRMED.name
-                                                )
+                                                if (updated == 1) {
+                                                    acceptedEventToSync = entity.copy(
+                                                        status = EventStatus.CONFIRMED.name
+                                                    )
+                                                } else {
+                                                    snackbarHostState.showSnackbar(
+                                                        "This proposal can no longer be accepted"
+                                                    )
+                                                }
                                             } catch (e: Exception) {
                                                 snackbarHostState.showSnackbar(
                                                     "Could not confirm the match"
@@ -496,22 +769,30 @@ fun CalendarScreen(
                                 OutlinedButton(
                                     onClick = {
                                         coroutineScope.launch {
-                                            eventDao.updateEventStatus(
-                                                entity.id,
-                                                EventStatus.DECLINED.name
-                                            )
+                                            try {
+                                                val userId = currentUserId ?: return@launch
+
+                                                val updated = eventDao.declineProposal(
+                                                    eventId = entity.id,
+                                                    currentUserId = userId
+                                                )
+
+                                                if (updated == 0) {
+                                                    snackbarHostState.showSnackbar(
+                                                        "This proposal can no longer be declined"
+                                                    )
+                                                }
+                                            } catch (e: Exception) {
+                                                snackbarHostState.showSnackbar(
+                                                    "Could not decline the match"
+                                                )
+                                            }
                                         }
                                     }
                                 ) {
                                     Text("Decline")
                                 }
                             }
-
-                            Text(
-                                text = "Demo: simulate the friend's response",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                         }
                     }
                 }
@@ -524,10 +805,12 @@ fun CalendarScreen(
     if (showAddEventDialog) {
         AddEventDialog(
             initialDate = selectedDate,
-            // Temporary development-only account for proposal testing.
-            courtPalFriends = listOf(
-                CalendarFriendOption(userId = "test-user-001", username = "testfriend")
-            ),
+            courtPalFriends = friends.map { friend ->
+                CalendarFriendOption(
+                    userId = friend.friendUserId.toString(),
+                    username = friend.username
+                )
+            },
             onDismiss = {
                 showAddEventDialog = false
             },
@@ -536,8 +819,15 @@ fun CalendarScreen(
 
                 coroutineScope.launch {
                     try {
+                        val ownerId = currentUserId ?: return@launch
+
                         val roomEventId = eventDao.insertEvent(
-                            newEvent.toEntity(friendId = friendId, friendName = friendName)
+                            newEvent.toEntity(
+                                friendId = friendId,
+                                friendName = friendName
+                            ).copy(
+                                ownerUserId = ownerId
+                            )
                         )
 
                         selectedDate = newEvent.date
@@ -586,7 +876,31 @@ fun CalendarScreen(
                                 }
                                 return@launch
                             }
-                            eventDao.updateEvent(edited)
+                            if (
+                                existing.isLinkedCourtPalFriend() &&
+                                existing.status == EventStatus.PENDING.name
+                            ) {
+                                val userId = currentUserId ?: return@launch
+
+                                val updated = eventDao.updatePendingProposal(
+                                    eventId = existing.id,
+                                    currentUserId = userId,
+                                    title = edited.title,
+                                    date = edited.date,
+                                    startTime = edited.startTime,
+                                    endTime = edited.endTime,
+                                    location = edited.location
+                                )
+
+                                if (updated != 1) {
+                                    snackbarHostState.showSnackbar(
+                                        "Only the sender can edit a pending proposal"
+                                    )
+                                    return@launch
+                                }
+                            } else {
+                                eventDao.updateEvent(edited)
+                            }
                             selectedDate = LocalDate.parse(edited.date)
                             displayedMonth = YearMonth.from(selectedDate)
                             eventToEdit = null
@@ -622,9 +936,18 @@ fun CalendarScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Your confirmed match will not change until the amendment is accepted.")
-                    Text("Current: ${original.title} · ${original.date} · ${original.startTime}–${original.endTime} · ${original.location}")
-                    Text("Proposed: ${proposed.title} · ${proposed.date} · ${proposed.startTime}–${proposed.endTime} · ${proposed.location}")
-                    Text("Demo: this proposal appears locally in Friends, not on another device.")
+                    Text(
+                        "Current: ${original.title} · ${
+                            formatDate(original.date)
+                        } · ${original.startTime}–${original.endTime} · ${original.location}"
+                    )
+
+                    Text(
+                        "Proposed: ${proposed.title} · ${
+                            formatDate(proposed.date)
+                        } · ${proposed.startTime}–${proposed.endTime} · ${proposed.location}"
+                    )
+                    Text("The other participant can accept or decline your proposed changes.")
                 }
             },
             confirmButton = {
@@ -632,12 +955,19 @@ fun CalendarScreen(
                     amendmentToConfirm = null
                     coroutineScope.launch {
                         try {
+                            val userId = currentUserId ?: return@launch
+
                             val saved = eventDao.submitAmendment(
-                                original.id, proposed.title, proposed.date, proposed.startTime,
-                                proposed.endTime, proposed.location
+                                eventId = original.id,
+                                currentUserId = userId,
+                                title = proposed.title,
+                                date = proposed.date,
+                                startTime = proposed.startTime,
+                                endTime = proposed.endTime,
+                                location = proposed.location
                             )
                             snackbarHostState.showSnackbar(if (saved == 1)
-                                "Amended proposal saved for approval (local demo)"
+                                "Amendment sent for approval"
                             else "Could not propose changes; refresh the event")
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("Could not save amended proposal")
@@ -665,7 +995,7 @@ fun CalendarScreen(
                         event.status == EventStatus.CANCELLED.name ->
                             "Permanently remove this cancelled match from your courtPal calendar? This cannot be undone."
                         event.isLinkedCourtPalFriend() ->
-                            "Cancel this match in courtPal? This demo does not notify the friend."
+                            "Cancel this match in courtPal?"
                         else -> "Delete this event from courtPal?"
                     })
                     if (event.googleEventId != null) {
@@ -682,7 +1012,14 @@ fun CalendarScreen(
             confirmButton = {
                 TextButton(onClick = {
                     // A Google deletion must finish before the Room record is discarded.
-                    if (event.googleEventId != null && removeFromGoogle) {
+                    if (
+                        event.googleEventId != null &&
+                        removeFromGoogle &&
+                        (
+                                !event.isLinkedCourtPalFriend() ||
+                                event.ownerUserId == currentUserId
+                                )
+                    ) {
                         requestGoogleSync(PendingGoogleAction(
                             action = GoogleCalendarAction.DELETE,
                             roomEventId = event.id,
@@ -692,20 +1029,35 @@ fun CalendarScreen(
                     } else {
                         coroutineScope.launch {
                             try {
-                                if (event.isLinkedCourtPalFriend() && event.status != EventStatus.CANCELLED.name) {
-                                    eventDao.updateEventStatus(
-                                        event.id, EventStatus.CANCELLED.name
+                                if (event.status == EventStatus.CANCELLED.name) {
+                                    eventDao.deleteEvent(event)
+
+                                } else if (event.isLinkedCourtPalFriend()) {
+                                    val userId = currentUserId ?: return@launch
+
+                                    val cancelled = eventDao.cancelOwnedEvent(
+                                        eventId = event.id,
+                                        currentUserId = userId
                                     )
+
+                                    if (cancelled == 0) {
+                                        snackbarHostState.showSnackbar(
+                                            "Only the event creator can cancel this match"
+                                        )
+                                        return@launch
+                                    }
+
                                 } else {
                                     eventDao.deleteEvent(event)
                                 }
                                 eventToDelete = null
                                 snackbarHostState.showSnackbar(
                                     if (event.status == EventStatus.CANCELLED.name)
-                                        "Cancelled match permanently deleted from courtPal"
+                                        "Cancelled match permanently deleted from CourtPal"
                                     else if (event.isLinkedCourtPalFriend())
-                                        "Match cancelled locally; no friend notification sent"
-                                    else "Event deleted from courtPal"
+                                        "Match cancelled"
+                                    else
+                                        "Event deleted from CourtPal"
                                 )
                             } catch (e: Exception) {
                                 snackbarHostState.showSnackbar("Could not delete event")
@@ -730,7 +1082,7 @@ fun CalendarScreen(
                     Text("Date: ${target.date}")
                     Text("Time: ${target.startTime}–${target.endTime}")
                     Text("Location: ${target.location}")
-                    target.displayFriendName()?.let { Text("Playing with: $it") }
+                    target.displayParticipantName(currentUserId = currentUserId, ownerUsername = target.ownerUserId?.let { ownerUsernames[it] })?.let { Text("Playing with: $it") }
                     if (target.googleEventId == null) {
                         Text("Would you like to add this match to Google Calendar?")
                     } else {
@@ -1136,9 +1488,11 @@ private fun EditCalendarEventDialog(
                     label = { Text("Location") },
                     singleLine = true
                 )
-                (existingEvent.friendName ?: existingEvent.friendId)?.let {
-                    Text("Match with $it (friend cannot be changed)",
-                        style = MaterialTheme.typography.bodySmall)
+                existingEvent.displayFriendName()?.let {
+                    Text(
+                        "Match with ${if (existingEvent.isLinkedCourtPalFriend()) formatUsername(it) else it} (friend cannot be changed)",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
         },
@@ -1160,4 +1514,24 @@ private fun EditCalendarEventDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+private fun CalendarEventEntity.displayParticipantName(
+    currentUserId: Long?,
+    ownerUsername: String?
+): String? {
+    val name = displayFriendName() ?: return null
+
+    if (!isLinkedCourtPalFriend()) {
+        return name
+    }
+
+    return if (currentUserId != null &&
+        ownerUserId != null &&
+        currentUserId != ownerUserId
+    ) {
+        ownerUsername?.let(::formatUsername)
+    } else {
+        formatUsername(name)
+    }
 }
