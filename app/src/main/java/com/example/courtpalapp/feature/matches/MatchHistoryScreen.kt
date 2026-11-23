@@ -3,12 +3,28 @@ package com.example.courtpalapp.feature.matches
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -18,9 +34,9 @@ import androidx.compose.ui.unit.dp
 import com.example.courtpalapp.data.local.AppDatabase
 import com.example.courtpalapp.data.local.MatchEntity
 import com.example.courtpalapp.data.local.SessionManager
+import com.example.courtpalapp.feature.matches.components.displayMatchForViewer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -35,11 +51,24 @@ fun MatchHistoryScreen(
     }
     val sessionManager = remember(context) { SessionManager(context) }
     val currentUserId by sessionManager.currentUserId.collectAsState()
+    val userDao = remember(context) {
+        AppDatabase.getDatabase(context).userDao()
+    }
+
+    val users by remember(userDao) {
+        userDao.getAllUsers()
+    }.collectAsState(initial = emptyList())
+
+    val usernamesById = remember(users) {
+        users.associate { it.id to it.username }
+    }
 
     // A fresh Flow and keyed composition prevent one account's matches from
     // briefly appearing when someone switches accounts on the same device.
     val matchesFlow = remember(matchDao, currentUserId) {
-        currentUserId?.let { matchDao.getMatchesForUser(it) }
+        currentUserId?.let {
+            matchDao.getMatchesVisibleToUser(it)
+        }
     }
     val matches = if (matchesFlow != null) {
         key(currentUserId) {
@@ -77,7 +106,12 @@ fun MatchHistoryScreen(
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
                 items(items = matches, key = { it.id }) { match ->
-                    MatchHistoryCard(match = match, onClick = { onMatchClick(match.id) })
+                    MatchHistoryCard(
+                        match = match,
+                        viewerUserId = currentUserId!!,
+                        usernamesById = usernamesById,
+                        onClick = { onMatchClick(match.id) }
+                    )
                 }
             }
         }
@@ -87,16 +121,19 @@ fun MatchHistoryScreen(
 @Composable
 private fun MatchHistoryCard(
     match: MatchEntity,
+    viewerUserId: Long,
+    usernamesById: Map<Long, String>,
     onClick: () -> Unit
 ) {
     val date = remember(match.playedAt) {
         SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(match.playedAt))
     }
-    val winnerName = when {
-        !match.isCompleted -> null
-        match.winner == 1 -> match.player1Name
-        match.winner == 2 -> match.player2Name
-        else -> "Unknown"
+    val display = remember(match, viewerUserId, usernamesById) {
+        displayMatchForViewer(
+            match = match,
+            viewerUserId = viewerUserId,
+            usernamesById = usernamesById
+        )
     }
 
     // Downsample photos to avoid decoding full-resolution files while scrolling.
@@ -140,12 +177,16 @@ private fun MatchHistoryCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "${match.player1Name} vs ${match.player2Name}",
+                text = display.title,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = if (match.isCompleted) "Winner: $winnerName" else "Match unfinished",
+                text = if (match.isCompleted) {
+                    "Winner: ${display.winner}"
+                } else {
+                    "Match unfinished"
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (match.isCompleted) {
                     MaterialTheme.colorScheme.primary
@@ -157,7 +198,7 @@ private fun MatchHistoryCard(
             if (photoBitmap != null) {
                 Image(
                     bitmap = photoBitmap!!.asImageBitmap(),
-                    contentDescription = "Photo from ${match.player1Name} vs ${match.player2Name}",
+                    contentDescription = "Photo from ${display.title}",
                     modifier = Modifier.fillMaxWidth().height(180.dp),
                     contentScale = ContentScale.Crop
                 )
@@ -166,12 +207,12 @@ private fun MatchHistoryCard(
             HorizontalDivider()
 
             Text(
-                text = "Sets: ${formatMatchSets(match)}",
+                text = "Sets: ${display.sets}",
                 style = MaterialTheme.typography.bodyMedium
             )
             if (match.matchMode != "MANUAL") {
                 Text(
-                    text = "Points won: ${match.player1TotalPoints} – ${match.player2TotalPoints}",
+                    text = "Points won: ${display.pointsWon}",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -187,37 +228,4 @@ private fun MatchHistoryCard(
             }
         }
     }
-}
-
-private fun formatCompletedSets(json: String): String {
-    return try {
-        val sets = JSONArray(json)
-        if (sets.length() == 0) return "Not recorded"
-        (0 until sets.length()).joinToString("  |  ") { index ->
-            val set = sets.getJSONObject(index)
-            val p1 = set.getInt("player1Games")
-            val p2 = set.getInt("player2Games")
-            val tieBreak1 = if (set.has("player1TieBreakPoints") &&
-                !set.isNull("player1TieBreakPoints")) {
-                set.getInt("player1TieBreakPoints")
-            } else null
-            val tieBreak2 = if (set.has("player2TieBreakPoints") &&
-                !set.isNull("player2TieBreakPoints")) {
-                set.getInt("player2TieBreakPoints")
-            } else null
-            if (tieBreak1 != null && tieBreak2 != null) {
-                "$p1–$p2 (TB $tieBreak1–$tieBreak2)"
-            } else "$p1–$p2"
-        }
-    } catch (_: Exception) {
-        "Unavailable"
-    }
-}
-
-private fun formatMatchSets(match: MatchEntity): String {
-    val completed = formatCompletedSets(match.completedSetsJson)
-    if (match.isCompleted) return completed
-
-    val currentSet = "${match.player1Games}–${match.player2Games}"
-    return if (completed == "Not recorded") currentSet else "$completed  |  $currentSet"
 }

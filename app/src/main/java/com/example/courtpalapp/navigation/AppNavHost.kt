@@ -101,6 +101,10 @@ fun AppNavHost() {
 
     val matchViewModel: LiveMatchViewModel = viewModel()
 
+    LaunchedEffect(currentUserId) {
+        matchViewModel.resetForAccountChange(currentUserId)
+    }
+
     val activeMatchDao = remember(context) {
         AppDatabase.getDatabase(context).activeMatchDao()
     }
@@ -133,6 +137,17 @@ fun AppNavHost() {
         return
     }
 
+    val linkedFriends by remember(database, currentUserId) {
+        database.friendDao()
+            .observeFriendDisplaysForUser(currentUserId!!)
+    }.collectAsState(initial = emptyList())
+
+    val matchFriendOptions = remember(linkedFriends) {
+        linkedFriends.map { friend ->
+            friend.friendUserId.toString() to friend.username
+        }
+    }
+
     val preferencesRepository = remember(context) {
         UserPreferencesRepository(context)
     }
@@ -155,13 +170,27 @@ fun AppNavHost() {
         ) {
 
             composable(Screen.Home.route) {
-                val activeMatches by activeMatchDao
-                    .getAllActiveMatches()
-                    .collectAsState(initial = emptyList())
+                val activeMatchesFlow = remember(
+                    activeMatchDao,
+                    currentUserId
+                ) {
+                    activeMatchDao.getActiveMatchesForUser(currentUserId!!)
+                }
 
-                val calendarEvents by calendarEventDao.getAllEvents()
-                    .collectAsState(initial = emptyList())
+                val activeMatches by activeMatchesFlow.collectAsState(
+                    initial = emptyList()
+                )
 
+                val calendarEventsFlow = remember(
+                    calendarEventDao,
+                    currentUserId
+                ) {
+                    calendarEventDao.getEventsForUser(currentUserId!!)
+                }
+
+                val calendarEvents by calendarEventsFlow.collectAsState(
+                    initial = emptyList()
+                )
                 val upcomingMatches = getUpcomingMatches(calendarEvents)
 
                 HomeScreen(
@@ -210,7 +239,6 @@ fun AppNavHost() {
                 }
             }
 
-            // Retain the existing summary destination for other callers.
             composable(route = Screen.MatchSummary.route) { backStackEntry ->
                 val matchId = backStackEntry.arguments
                     ?.getString("matchId")
@@ -309,6 +337,7 @@ fun AppNavHost() {
                 matchPreferences?.let { preferences ->
                     MatchSetupScreen(
                         defaultPreferences = preferences,
+                        friends = matchFriendOptions,
                         onStartMatch = onStartMatch@{ settings ->
                             if (settings.matchMode == MatchMode.MANUAL) {
                                 navController.navigate(manualResultRoute(settings)) {
@@ -318,6 +347,7 @@ fun AppNavHost() {
                             }
                             matchViewModel.startPersistedMatch(
                                 newSettings = settings,
+                                ownerUserId = currentUserId!!,
                                 onCreated = {
                                     navController.navigate(Screen.LiveMatch.route)
                                 }
@@ -349,8 +379,16 @@ fun AppNavHost() {
                     matchViewModel.clearPersistenceError()
                 }
 
-                val calendarEvents by calendarEventDao.getAllEvents()
-                    .collectAsState(initial = emptyList())
+                val calendarEventsFlow = remember(
+                    calendarEventDao,
+                    currentUserId
+                ) {
+                    calendarEventDao.getEventsForUser(currentUserId!!)
+                }
+
+                val calendarEvents by calendarEventsFlow.collectAsState(
+                    initial = emptyList()
+                )
 
                 val event = calendarEvents.firstOrNull { it.id == eventId }
 
@@ -368,6 +406,7 @@ fun AppNavHost() {
                                     ?: "Guest",
                                 initialPlayer2Id = event.friendId,
                                 defaultPreferences = preferences,
+                                friends = matchFriendOptions,
 
                                 onStartMatch = onStartMatch@{ settings ->
                                     if (settings.matchMode == MatchMode.MANUAL) {
@@ -383,6 +422,7 @@ fun AppNavHost() {
                                     }
                                     matchViewModel.startPersistedMatch(
                                         newSettings = settings,
+                                        ownerUserId = currentUserId!!,
                                         calendarEventId = eventId,
                                         database = AppDatabase.getDatabase(context),
                                         onCreated = { matchId ->
@@ -434,9 +474,15 @@ fun AppNavHost() {
                         settings = settings,
                         calendarEventId = entry.arguments?.getLong("eventId")?.takeIf { it != -1L },
                         onBack = { navController.popBackStack() },
-                        onSaved = {
+                        onSaved = { savedMatchId ->
                             navController.navigate(Screen.Matches.route) {
-                                popUpTo(Screen.Home.route)
+                                popUpTo(Screen.Home.route) {
+                                    inclusive = false
+                                }
+                                launchSingleTop = true
+                            }
+
+                            navController.navigate("match-detail/$savedMatchId") {
                                 launchSingleTop = true
                             }
                         }
@@ -449,11 +495,15 @@ fun AppNavHost() {
                     LiveMatchScreen(
                         settings = settings,
                         matchViewModel = matchViewModel,
-                        onMatchFinished = { _ ->
+                        onMatchFinished = { savedMatchId ->
                             navController.navigate(Screen.Matches.route) {
                                 popUpTo(Screen.LiveMatch.route) {
                                     inclusive = true
                                 }
+                                launchSingleTop = true
+                            }
+
+                            navController.navigate("match-detail/$savedMatchId") {
                                 launchSingleTop = true
                             }
                         },
@@ -489,8 +539,14 @@ fun AppNavHost() {
                     ?.getLong("matchId")
                     ?: return@composable
 
-                LaunchedEffect(matchId) {
-                    matchViewModel.loadActiveMatch(matchId) {}
+                LaunchedEffect(matchId, currentUserId) {
+                    currentUserId?.let { userId ->
+                        matchViewModel.loadActiveMatch(
+                            matchId = matchId,
+                            ownerUserId = userId,
+                            onLoaded = {}
+                        )
+                    }
                 }
 
                 val settings = matchViewModel.settings
@@ -502,11 +558,15 @@ fun AppNavHost() {
                     LiveMatchScreen(
                         settings = settings,
                         matchViewModel = matchViewModel,
-                        onMatchFinished = { _ ->
+                        onMatchFinished = { savedMatchId ->
                             navController.navigate(Screen.Matches.route) {
                                 popUpTo(Screen.ResumeMatch.route) {
                                     inclusive = true
                                 }
+                                launchSingleTop = true
+                            }
+
+                            navController.navigate("match-detail/$savedMatchId") {
                                 launchSingleTop = true
                             }
                         },

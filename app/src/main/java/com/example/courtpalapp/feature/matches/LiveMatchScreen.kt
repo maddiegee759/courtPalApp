@@ -19,7 +19,7 @@ import com.example.courtpalapp.data.local.SessionManager
 @Composable
 fun LiveMatchScreen(
     settings: MatchSettings,
-    onMatchFinished: (TennisScore) -> Unit = {},
+    onMatchFinished: (Long) -> Unit = {},
     onMatchQuit: () -> Unit = {},
     onMatchDeleted: () -> Unit = {},
     matchViewModel: LiveMatchViewModel = viewModel()
@@ -34,8 +34,25 @@ fun LiveMatchScreen(
     val score = matchViewModel.score ?: return
     val history = matchViewModel.history
     val rallyShots = matchViewModel.rallyShots
-    val showFinishDialog = matchViewModel.showFinishDialog
     var showQuitDialog by remember { mutableStateOf(false) }
+    val latestOnMatchFinished by rememberUpdatedState(onMatchFinished)
+
+    LaunchedEffect(score.isFinished, currentUserId) {
+        if (score.isFinished) {
+            // We no longer need the finish confirmation dialog
+            matchViewModel.dismissFinishDialog()
+
+            currentUserId?.let { userId ->
+                matchViewModel.saveCompletedMatch(
+                    database = database,
+                    ownerUserId = userId,
+                    onSaved = { savedMatchId ->
+                        latestOnMatchFinished(savedMatchId)
+                    }
+                )
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -138,6 +155,7 @@ fun LiveMatchScreen(
         }
 
         if (score.isFinished) {
+
             Text(
                 text = "Match complete!",
                 style = MaterialTheme.typography.headlineSmall
@@ -145,37 +163,50 @@ fun LiveMatchScreen(
 
             Text(
                 text = "Winner: " +
-                        if (score.winner == 1)
+                        if (score.winner == 1) {
                             settings.player1Name
-                        else
+                        } else {
                             settings.player2Name
+                        }
             )
 
-            Button(
-                onClick = {
-                    currentUserId?.let { userId ->
-                        matchViewModel.saveCompletedMatch(database, userId) {
-                            onMatchFinished(score)
-                        }
-                    }
-                },
-                enabled = !matchViewModel.isSaving && currentUserId != null,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    if (matchViewModel.isSaving) {
-                        "Saving..."
-                    } else {
-                        "Save Match"
-                    }
-                )
-            }
+            if (matchViewModel.isSaving) {
 
-            matchViewModel.saveError?.let { error ->
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text("Saving your match...")
+
+            } else if (matchViewModel.saveError != null) {
+
                 Text(
-                    text = error,
+                    text = matchViewModel.saveError!!,
                     color = MaterialTheme.colorScheme.error
                 )
+
+                Button(
+                    onClick = {
+                        currentUserId?.let { userId ->
+                            matchViewModel.saveCompletedMatch(
+                                database = database,
+                                ownerUserId = userId,
+                                onSaved = { savedMatchId ->
+                                    latestOnMatchFinished(savedMatchId)
+                                }
+                            )
+                        }
+                    },
+                    enabled = currentUserId != null,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Retry Save")
+                }
+
+            } else {
+
+                Text("Preparing Match History...")
+
             }
         }
 
@@ -269,14 +300,18 @@ fun LiveMatchScreen(
                 Column {
                     TextButton(
                         onClick = {
-                            matchViewModel.deleteUnfinishedMatch(
-                                onDeleted = {
-                                    showQuitDialog = false
-                                    onMatchDeleted()
-                                }
-                            )
+                            currentUserId?.let { userId ->
+                                matchViewModel.deleteUnfinishedMatch(
+                                    ownerUserId = userId,
+                                    onDeleted = {
+                                        showQuitDialog = false
+                                        onMatchDeleted()
+                                    }
+                                )
+                            }
                         },
-                        enabled = !matchViewModel.isSaving
+                        enabled = !matchViewModel.isSaving &&
+                                currentUserId != null
                     ) {
                         Text(
                             "Delete Match",
@@ -290,50 +325,6 @@ fun LiveMatchScreen(
                     ) {
                         Text("Cancel")
                     }
-                }
-            }
-        )
-    }
-
-    if (showFinishDialog) {
-        AlertDialog(
-            onDismissRequest = {
-                matchViewModel.dismissFinishDialog()
-            },
-            title = {
-                Text("Match complete!")
-            },
-            text = {
-                Text(
-                    "Winner: " +
-                            if (score.winner == 1)
-                                settings.player1Name
-                            else
-                                settings.player2Name
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        matchViewModel.dismissFinishDialog()
-                        currentUserId?.let { userId ->
-                            matchViewModel.saveCompletedMatch(database, userId) {
-                                onMatchFinished(score)
-                            }
-                        }
-                    },
-                    enabled = !matchViewModel.isSaving && currentUserId != null
-                ) {
-                    Text("Match History")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        matchViewModel.dismissFinishDialog()
-                    }
-                ) {
-                    Text("Stay here")
                 }
             }
         )

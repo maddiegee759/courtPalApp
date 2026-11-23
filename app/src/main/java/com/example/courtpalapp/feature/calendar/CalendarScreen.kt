@@ -187,7 +187,7 @@ fun CalendarScreen(
 
     val friendsFlow = remember(currentUserId, friendDao) {
         currentUserId?.let { userId ->
-            friendDao.getFriendsForUser(userId)
+            friendDao.observeFriendDisplaysForUser(userId)
         }
     }
 

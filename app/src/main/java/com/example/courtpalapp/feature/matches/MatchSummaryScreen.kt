@@ -6,19 +6,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalContext
 import com.example.courtpalapp.data.local.AppDatabase
 import com.example.courtpalapp.data.local.MatchEntity
+import com.example.courtpalapp.data.local.SessionManager
+import com.example.courtpalapp.feature.matches.components.displayMatchForViewer
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun MatchSummaryScreen(
@@ -26,6 +23,24 @@ fun MatchSummaryScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+
+    val sessionManager = remember(context) {
+        SessionManager(context)
+    }
+
+    val currentUserId by sessionManager.currentUserId.collectAsState()
+
+    val userDao = remember(context) {
+        AppDatabase.getDatabase(context).userDao()
+    }
+
+    val users by remember(userDao) {
+        userDao.getAllUsers()
+    }.collectAsState(initial = emptyList())
+
+    val usernamesById = remember(users) {
+        users.associate { it.id to it.username }
+    }
 
     val matchDao = remember(context) {
         AppDatabase.getDatabase(context).matchDao()
@@ -45,21 +60,30 @@ fun MatchSummaryScreen(
 
     val coroutineScope = rememberCoroutineScope()
 
-    var match by remember(matchId) {
+    var match by remember(matchId, currentUserId) {
         mutableStateOf<MatchEntity?>(null)
     }
 
-    var isLoading by remember(matchId) {
+    var isLoading by remember(matchId, currentUserId) {
         mutableStateOf(true)
     }
 
-    LaunchedEffect(matchId) {
+    LaunchedEffect(matchId, currentUserId) {
         isLoading = true
-        match = withContext(Dispatchers.IO) {
-            matchDao.getMatchById(matchId)
+
+        match = currentUserId?.let { userId ->
+            withContext(Dispatchers.IO) {
+                matchDao.getMatchByIdVisibleToUser(
+                    matchId = matchId,
+                    userId = userId
+                )
+            }
         }
+
         isLoading = false
     }
+
+    val viewerId = currentUserId
 
     Column(
         modifier = Modifier
@@ -81,37 +105,34 @@ fun MatchSummaryScreen(
 
         if (isLoading) {
             CircularProgressIndicator()
-        } else if (match == null) {
+        } else if (match == null || viewerId == null) {
             Text("Match not found.")
         } else {
             val savedMatch = match!!
 
-            val date = remember(savedMatch.playedAt) {
-                SimpleDateFormat(
-                    "dd MMM yyyy",
-                    Locale.getDefault()
-                ).format(Date(savedMatch.playedAt))
-            }
+            val canEdit = savedMatch.ownerUserId != null &&
+                    savedMatch.ownerUserId == currentUserId
 
-            val winnerName = when (savedMatch.winner) {
-                1 -> savedMatch.player1Name
-                2 -> savedMatch.player2Name
-                else -> "Unknown"
+            val display = remember(savedMatch, viewerId, usernamesById) {
+                displayMatchForViewer(
+                    match = savedMatch,
+                    viewerUserId = viewerId,
+                    usernamesById = usernamesById
+                )
             }
 
             Text(
-                text = date,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Text(
-                text = "${savedMatch.player1Name} vs ${savedMatch.player2Name}",
+                text = display.title,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
 
             Text(
-                text = "Winner: $winnerName",
+                text = if (savedMatch.isCompleted) {
+                    "Winner: ${display.winner}"
+                } else {
+                    "Match unfinished"
+                },
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold
             )
@@ -124,8 +145,15 @@ fun MatchSummaryScreen(
                 fontWeight = FontWeight.Bold
             )
 
-            val setScores = remember(savedMatch.completedSetsJson) {
-                parseSetScores(savedMatch.completedSetsJson)
+            val setScores = remember(display.sets) {
+                if (
+                    display.sets == "Not recorded" ||
+                    display.sets == "Unavailable"
+                ) {
+                    emptyList()
+                } else {
+                    display.sets.split("  |  ")
+                }
             }
 
             if (setScores.isEmpty()) {
@@ -147,15 +175,9 @@ fun MatchSummaryScreen(
                 fontWeight = FontWeight.Bold
             )
 
-            Text(
-                "Points won by ${savedMatch.player1Name}: " +
-                        savedMatch.player1TotalPoints
-            )
-
-            Text(
-                "Points won by ${savedMatch.player2Name}: " +
-                        savedMatch.player2TotalPoints
-            )
+            if (savedMatch.matchMode != "MANUAL") {
+                Text("Points won: ${display.pointsWon}")
+            }
 
             if (savedMatch.trackRallies) {
                 Text(
@@ -195,28 +217,41 @@ fun MatchSummaryScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            deleteError?.let { error ->
-                Text(
-                    text = error,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
+            if (canEdit) {
+                deleteError?.let { error ->
+                    Text(
+                        text = error,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
 
-            OutlinedButton(
-                onClick = {
-                    showDeleteDialog = true
-                },
-                enabled = !isDeleting,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error
+                OutlinedButton(
+                    onClick = {
+                        showDeleteDialog = true
+                    },
+                    enabled = !isDeleting,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Delete Match")
+                }
+            } else {
+                Text(
+                    text = "This match was recorded by your friend. " +
+                            "Only the tracker can delete it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            ) {
-                Text("Delete Match")
             }
         }
     }
-    if (showDeleteDialog) {
+    if (
+        showDeleteDialog &&
+        currentUserId != null &&
+        match?.ownerUserId == currentUserId
+    ) {
         AlertDialog(
             onDismissRequest = {
                 if (!isDeleting) {
@@ -241,8 +276,26 @@ fun MatchSummaryScreen(
 
                         coroutineScope.launch {
                             try {
+                                val userId = requireNotNull(currentUserId) {
+                                    "Please log in to delete this match"
+                                }
+
+                                val deleted = withContext(Dispatchers.IO) {
+                                    matchDao.deleteMatchByIdForUser(
+                                        matchId = matchId,
+                                        userId = userId
+                                    )
+                                }
+
+                                check(deleted == 1) {
+                                    "Match not found or you do not have permission to delete it"
+                                }
+
+                                // Remove the locally stored match photo as well.
                                 withContext(Dispatchers.IO) {
-                                    matchDao.deleteMatchById(matchId)
+                                    match?.photoUri?.let { photoPath ->
+                                        deleteOwnedPhoto(context.filesDir, photoPath)
+                                    }
                                 }
 
                                 showDeleteDialog = false
@@ -277,40 +330,5 @@ fun MatchSummaryScreen(
                 }
             }
         )
-    }
-}
-
-private fun parseSetScores(json: String): List<String> {
-    return try {
-        val sets = JSONArray(json)
-
-        (0 until sets.length()).map { index ->
-            val set = sets.getJSONObject(index)
-
-            val p1 = set.getInt("player1Games")
-            val p2 = set.getInt("player2Games")
-
-            val tb1 = if (
-                set.has("player1TieBreakPoints") &&
-                !set.isNull("player1TieBreakPoints")
-            ) {
-                set.getInt("player1TieBreakPoints")
-            } else null
-
-            val tb2 = if (
-                set.has("player2TieBreakPoints") &&
-                !set.isNull("player2TieBreakPoints")
-            ) {
-                set.getInt("player2TieBreakPoints")
-            } else null
-
-            if (tb1 != null && tb2 != null) {
-                "$p1–$p2 (Tie-break $tb1–$tb2)"
-            } else {
-                "$p1–$p2"
-            }
-        }
-    } catch (e: Exception) {
-        emptyList()
     }
 }

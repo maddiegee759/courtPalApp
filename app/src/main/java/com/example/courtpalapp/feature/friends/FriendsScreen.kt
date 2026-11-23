@@ -891,7 +891,7 @@ private fun FriendActivityCard(
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "Completed a tennis match",
+                            text = "Played a tennis match",
                             fontWeight = FontWeight.SemiBold
                         )
                     }

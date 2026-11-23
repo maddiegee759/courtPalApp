@@ -2,10 +2,12 @@ package com.example.courtpalapp.feature.matches
 
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -28,15 +30,17 @@ import com.example.courtpalapp.domain.match.TennisScoring
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun ManualMatchScreen(
     settings: MatchSettings,
     calendarEventId: Long?,
     onBack: () -> Unit,
-    onSaved: () -> Unit
+    onSaved: (Long) -> Unit
 ) {
     val context = LocalContext.current
     val database = remember(context) { AppDatabase.getDatabase(context) }
@@ -136,14 +140,16 @@ fun ManualMatchScreen(
                 saving = true
                 error = null
                 scope.launch {
-                    try {
-                        withContext(NonCancellable + Dispatchers.IO) {
+                    val savedMatchId = try {
+                        withContext(
+                            NonCancellable + Dispatchers.IO
+                        ) {
                             val photoPath = when {
                                 selectedUri != null -> copyPhotoToPrivateStorage(context, selectedUri)
                                 selectedBitmap != null -> saveBitmapToPrivateStorage(context, selectedBitmap)
                                 else -> null
                             }
-                            try {
+                            val insertedMatchId = try {
                                 val completedScore = TennisScoring.newMatch(settings).copy(
                                     completedSets = result.sets,
                                     player1Sets = result.player1Sets,
@@ -177,6 +183,7 @@ fun ManualMatchScreen(
                             } catch (badgeError: Exception) {
                                 Log.w("CourtPalBadges", "Could not record match badges", badgeError)
                             }
+                            insertedMatchId
                         }
                     } catch (e: CancellationException) {
                         throw e
@@ -186,7 +193,9 @@ fun ManualMatchScreen(
                     } finally {
                         saving = false
                     }
-                    onSaved()
+                    if (sessionManager.currentUserId.first() == ownerUserId) {
+                        onSaved(savedMatchId)
+                    }
                 }
             }
         ) { Text(if (saving) "Saving…" else "Save result") }

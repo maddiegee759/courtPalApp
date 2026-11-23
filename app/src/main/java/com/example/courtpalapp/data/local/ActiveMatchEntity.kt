@@ -18,5 +18,6 @@ data class ActiveMatchEntity(
     val historyJson: String,
 
     val rallyShots: Int = 0,
-    val lastUpdated: Long = System.currentTimeMillis()
+    val lastUpdated: Long = System.currentTimeMillis(),
+    val ownerUserId: Long? = null
 )

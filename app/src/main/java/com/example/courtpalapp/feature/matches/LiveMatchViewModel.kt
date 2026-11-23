@@ -54,6 +54,8 @@ class LiveMatchViewModel : ViewModel() {
     var activeMatchId by mutableStateOf<Long?>(null)
         private set
 
+    private var activeMatchOwnerUserId: Long? = null
+
     var persistenceError by mutableStateOf<String?>(null)
         private set
 
@@ -66,6 +68,35 @@ class LiveMatchViewModel : ViewModel() {
 
         settings = newSettings
         score = TennisScoring.newMatch(newSettings)
+    }
+
+    private var lastSessionUserId: Long? = null
+
+    private fun ownsCurrentActiveMatch(userId: Long): Boolean {
+        return lastSessionUserId == userId &&
+                activeMatchOwnerUserId == userId
+    }
+
+    fun resetForAccountChange(userId: Long?) {
+        if (lastSessionUserId == userId) return
+
+        lastSessionUserId = userId
+
+        // Clear only the match held in memory.
+        // Do not delete the unfinished match from Room.
+        settings = null
+        score = null
+        history = emptyList()
+        rallyShots = 0
+        showFinishDialog = false
+
+        activeMatchId = null
+        activeMatchOwnerUserId = null
+
+        isSaving = false
+        savedMatchId = null
+        saveError = null
+        persistenceError = null
     }
 
     fun awardPoint(player: Int) {
@@ -106,6 +137,7 @@ class LiveMatchViewModel : ViewModel() {
         savedMatchId = null
         saveError = null
         activeMatchId = null
+        activeMatchOwnerUserId = null
     }
 
     fun undoPoint() {
@@ -148,49 +180,101 @@ class LiveMatchViewModel : ViewModel() {
 
         if (!currentScore.isFinished || isSaving) return
 
-        savedMatchId?.let {
-            onSaved(it)
+        savedMatchId?.let { savedId ->
+            if (lastSessionUserId == ownerUserId) {
+                onSaved(savedId)
+            }
+            return
+        }
+
+        val currentActiveMatchId = activeMatchId ?: return
+
+        if (!ownsCurrentActiveMatch(ownerUserId)) {
+            saveError = "This match belongs to another account"
             return
         }
 
         isSaving = true
         saveError = null
 
-        val completedActiveMatchId = activeMatchId
-
         viewModelScope.launch {
             try {
-                // Wait for pending score updates.
+                // Finish any pending score updates.
                 saveJob?.join()
 
-                // Save the completed match to Match History.
-                val entity = currentScore.toMatchEntity(currentSettings)
-                    .copy(ownerUserId = ownerUserId)
-                val savedId = database.matchDao().insertMatch(entity)
+                check(ownsCurrentActiveMatch(ownerUserId)) {
+                    "Account changed while saving"
+                }
+
+                // Insert into history and remove from active matches
+                // as one transaction.
+                val savedId = database.withTransaction {
+                    val existing = database.activeMatchDao()
+                        .getMatchByIdForUser(
+                            currentActiveMatchId,
+                            ownerUserId
+                        )
+
+                    check(existing != null) {
+                        "Match not found for this account"
+                    }
+
+                    val entity = currentScore
+                        .toMatchEntity(currentSettings)
+                        .copy(ownerUserId = ownerUserId)
+
+                    val id = database.matchDao()
+                        .insertMatch(entity)
+
+                    val deleted = database.activeMatchDao()
+                        .deleteMatchForUser(
+                            currentActiveMatchId,
+                            ownerUserId
+                        )
+
+                    check(deleted == 1) {
+                        "Unable to remove active match"
+                    }
+
+                    id
+                }
+
+                // Do not update another account's screen.
+                if (lastSessionUserId != ownerUserId) {
+                    return@launch
+                }
 
                 savedMatchId = savedId
+                activeMatchId = null
+                activeMatchOwnerUserId = null
 
+                // Badge failure must not duplicate the saved match.
                 try {
                     recordEarnedBadges(database, ownerUserId)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
-                } catch (error: Exception) {
-                    // A badge write must not cause a saved match to be saved twice.
-                    Log.w("CourtPalBadges", "Could not record match badges", error)
+                } catch (e: Exception) {
+                    Log.w(
+                        "CourtPalBadges",
+                        "Could not record match badges",
+                        e
+                    )
                 }
 
-                // Remove only this completed match from active_matches.
-                if (completedActiveMatchId != null) {
-                    activeMatchDao?.deleteMatch(completedActiveMatchId)
+                if (lastSessionUserId == ownerUserId) {
+                    onSaved(savedId)
                 }
 
-                // Navigate to Match History.
-                onSaved(savedId)
-
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
-                saveError = e.message ?: "Unable to save match"
+                if (lastSessionUserId == ownerUserId) {
+                    saveError = e.message ?: "Unable to save match"
+                }
             } finally {
-                isSaving = false
+                if (lastSessionUserId == ownerUserId) {
+                    isSaving = false
+                }
             }
         }
     }
@@ -206,34 +290,62 @@ class LiveMatchViewModel : ViewModel() {
 
         if (currentScore.isFinished || isSaving) return
 
+        if (!ownsCurrentActiveMatch(ownerUserId)) {
+            saveError = "This match belongs to another account"
+            return
+        }
+
         isSaving = true
         saveError = null
 
         viewModelScope.launch {
             try {
-                // Wait for any pending score updates.
                 saveJob?.join()
 
+                check(ownsCurrentActiveMatch(ownerUserId)) {
+                    "Account changed while saving"
+                }
+
                 val savedId = database.withTransaction {
-                    // Save the partial match to Match History.
+                    val existing = database.activeMatchDao()
+                        .getMatchByIdForUser(
+                            currentActiveMatchId,
+                            ownerUserId
+                        )
+
+                    check(existing != null) {
+                        "Match not found for this account"
+                    }
+
                     val entity = currentScore.toMatchEntity(
                         settings = currentSettings,
                         allowUnfinished = true
                     ).copy(ownerUserId = ownerUserId)
 
-                    val id = database.matchDao().insertMatch(entity)
+                    val id = database.matchDao()
+                        .insertMatch(entity)
 
-                    // Remove the unfinished match from Continue Matches.
-                    database.activeMatchDao()
-                        .deleteMatch(currentActiveMatchId)
+                    val deleted = database.activeMatchDao()
+                        .deleteMatchForUser(
+                            currentActiveMatchId,
+                            ownerUserId
+                        )
+
+                    check(deleted == 1) {
+                        "Unable to remove unfinished match"
+                    }
 
                     id
                 }
 
+                if (lastSessionUserId != ownerUserId) {
+                    return@launch
+                }
+
                 savedMatchId = savedId
                 activeMatchId = null
+                activeMatchOwnerUserId = null
 
-                // Clear the saved match from memory.
                 settings = null
                 score = null
                 history = emptyList()
@@ -243,15 +355,23 @@ class LiveMatchViewModel : ViewModel() {
 
                 onSaved(savedId)
 
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
-                saveError = e.message ?: "Unable to save unfinished match"
+                if (lastSessionUserId == ownerUserId) {
+                    saveError =
+                        e.message ?: "Unable to save unfinished match"
+                }
             } finally {
-                isSaving = false
+                if (lastSessionUserId == ownerUserId) {
+                    isSaving = false
+                }
             }
         }
     }
 
     fun deleteUnfinishedMatch(
+        ownerUserId: Long,
         onDeleted: () -> Unit
     ) {
         val id = activeMatchId ?: return
@@ -260,18 +380,38 @@ class LiveMatchViewModel : ViewModel() {
 
         if (currentScore.isFinished || isSaving) return
 
+        if (!ownsCurrentActiveMatch(ownerUserId)) {
+            saveError = "This match belongs to another account"
+            return
+        }
+
         isSaving = true
         saveError = null
 
         viewModelScope.launch {
             try {
-                // Finish any pending score updates before deletion
                 saveJob?.join()
 
-                dao.deleteMatch(id)
+                check(ownsCurrentActiveMatch(ownerUserId)) {
+                    "Account changed while deleting"
+                }
 
-                // Clear the deleted match from memory
+                val deleted = dao.deleteMatchForUser(
+                    matchId = id,
+                    userId = ownerUserId
+                )
+
+                check(deleted == 1) {
+                    "Match not found for this account"
+                }
+
+                if (lastSessionUserId != ownerUserId) {
+                    return@launch
+                }
+
+                // Clear the deleted match from memory.
                 activeMatchId = null
+                activeMatchOwnerUserId = null
                 settings = null
                 score = null
                 history = emptyList()
@@ -282,10 +422,17 @@ class LiveMatchViewModel : ViewModel() {
 
                 onDeleted()
 
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
-                saveError = e.message ?: "Unable to delete match"
+                if (lastSessionUserId == ownerUserId) {
+                    saveError =
+                        e.message ?: "Unable to delete match"
+                }
             } finally {
-                isSaving = false
+                if (lastSessionUserId == ownerUserId) {
+                    isSaving = false
+                }
             }
         }
     }
@@ -297,6 +444,7 @@ class LiveMatchViewModel : ViewModel() {
 
     fun startPersistedMatch(
         newSettings: MatchSettings,
+        ownerUserId: Long,
         calendarEventId: Long? = null,
         database: AppDatabase? = null,
         onCreated: (Long) -> Unit
@@ -313,6 +461,7 @@ class LiveMatchViewModel : ViewModel() {
                 val initialScore = TennisScoring.newMatch(newSettings)
 
                 val entity = ActiveMatchEntity(
+                    ownerUserId = ownerUserId,
                     calendarEventId = calendarEventId,
                     player1Name = newSettings.player1Name,
                     player2Name = newSettings.player2Name,
@@ -355,6 +504,7 @@ class LiveMatchViewModel : ViewModel() {
 
                 startNewMatch(newSettings)
                 activeMatchId = id
+                activeMatchOwnerUserId = ownerUserId
                 onCreated(id)
 
             } catch (e: Exception) {
@@ -365,6 +515,7 @@ class LiveMatchViewModel : ViewModel() {
 
     fun loadActiveMatch(
         matchId: Long,
+        ownerUserId: Long,
         onLoaded: () -> Unit
     ) {
         val dao = activeMatchDao ?: run {
@@ -376,9 +527,10 @@ class LiveMatchViewModel : ViewModel() {
             try {
                 persistenceError = null
 
-                val entity = dao.getMatchById(matchId)
-                    ?: throw IllegalStateException("Match not found")
-
+                val entity = dao.getMatchByIdForUser(matchId, ownerUserId)
+                    ?: throw IllegalStateException(
+                        "Match not found for this account"
+                    )
                 val restoredSettings =
                     ActiveMatchJson.settingsFromJson(entity.settingsJson)
 
@@ -393,6 +545,7 @@ class LiveMatchViewModel : ViewModel() {
                 history = restoredHistory
                 rallyShots = entity.rallyShots
                 activeMatchId = entity.id
+                activeMatchOwnerUserId = ownerUserId
 
                 showFinishDialog = false
                 savedMatchId = null
@@ -406,6 +559,7 @@ class LiveMatchViewModel : ViewModel() {
     }
 
     private fun persistCurrentMatch() {
+        val ownerId = activeMatchOwnerUserId ?: return
         val dao = activeMatchDao ?: return
         val id = activeMatchId ?: return
         val currentSettings = settings ?: return
@@ -413,6 +567,7 @@ class LiveMatchViewModel : ViewModel() {
 
         val snapshot = ActiveMatchEntity(
             id = id,
+            ownerUserId = ownerId,
             player1Name = currentSettings.player1Name,
             player2Name = currentSettings.player2Name,
             settingsJson = ActiveMatchJson.settingsToJson(currentSettings),
@@ -428,18 +583,30 @@ class LiveMatchViewModel : ViewModel() {
             try {
                 previousJob?.join()
 
-                val existing = dao.getMatchById(id) ?: return@launch
-
-                dao.updateMatch(
-                    snapshot.copy(
-                        calendarEventId = existing.calendarEventId
-                    )
+                val rowsUpdated = dao.updateProgressForUser(
+                    matchId = id,
+                    ownerUserId = ownerId,
+                    scoreJson = snapshot.scoreJson,
+                    historyJson = snapshot.historyJson,
+                    rallyShots = snapshot.rallyShots,
+                    lastUpdated = snapshot.lastUpdated
                 )
 
-                persistenceError = null
+                if (lastSessionUserId == ownerId) {
+                    persistenceError = if (rowsUpdated == 1) {
+                        null
+                    } else {
+                        "Unable to save match progress for this account"
+                    }
+                }
+
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
-                persistenceError =
-                    e.message ?: "Unable to save match progress"
+                if (lastSessionUserId == ownerId) {
+                    persistenceError =
+                        e.message ?: "Unable to save match progress"
+                }
             }
         }
     }

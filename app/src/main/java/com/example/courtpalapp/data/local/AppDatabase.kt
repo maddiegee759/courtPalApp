@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FriendEntity::class,
         UserEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -52,6 +52,24 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+
+                // Add ownership to unfinished matches.
+                db.execSQL(
+                    "ALTER TABLE active_matches ADD COLUMN ownerUserId INTEGER"
+                )
+
+                // If only one account exists, old matches can safely
+                // be assigned to that account.
+                db.execSQL("""
+            UPDATE active_matches
+            SET ownerUserId = (SELECT id FROM users LIMIT 1)
+            WHERE (SELECT COUNT(*) FROM users) = 1
+        """.trimIndent())
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -62,7 +80,8 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "app_database"
                 )
-                    .addMigrations(MIGRATION_14_15)
+                    .addMigrations(MIGRATION_14_15, MIGRATION_15_16)
+                    .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
                     .build()
                     .also { INSTANCE = it }
             }

@@ -43,42 +43,9 @@ interface FriendDao {
     suspend fun insertFriend(friend: FriendEntity): Long
 
     @Query("""
-        SELECT * FROM friends
-        WHERE ownerUserId = :userId
-        ORDER BY username COLLATE NOCASE ASC
-    """)
-    fun getFriendsForUser(userId: Long): Flow<List<FriendEntity>>
-
-    @Query("""
-        SELECT * FROM friends
-        WHERE id = :id LIMIT 1
-    """)
-    suspend fun getFriendById(id: Long): FriendEntity?
-
-    @Query("""
-        SELECT COUNT(DISTINCT CASE
-            WHEN ownerUserId = :userId THEN friendUserId
-            ELSE ownerUserId END)
-        FROM friends
-        WHERE ownerUserId = :userId OR friendUserId = :userId
-    """)
-    fun getFriendCountForUser(userId: Long): Flow<Int>
-
-    @Query("""
         SELECT MIN(addedAt) FROM friends
         WHERE ownerUserId = :userId OR friendUserId = :userId
     """)
     suspend fun getFirstFriendshipTime(userId: Long): Long?
 
-    @Query("""
-        SELECT * FROM friends
-        ORDER BY username COLLATE NOCASE ASC
-    """)
-    fun getAllFriends(): Flow<List<FriendEntity>>
-
-    @Query("SELECT COUNT(*) FROM friends")
-    fun getFriendCount(): Flow<Int>
-
-    @Query("DELETE FROM friends WHERE id = :id")
-    suspend fun deleteFriendById(id: Long)
 }

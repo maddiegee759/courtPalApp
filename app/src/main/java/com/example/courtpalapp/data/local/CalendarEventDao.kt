@@ -10,9 +10,6 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface CalendarEventDao {
-    @Query("SELECT * FROM calendar_events ORDER BY date, startTime")
-    fun getAllEvents(): Flow<List<CalendarEventEntity>>
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEvent(event: CalendarEventEntity): Long
 

@@ -11,7 +11,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -21,13 +20,13 @@ import androidx.compose.ui.unit.dp
 import com.example.courtpalapp.data.local.AppDatabase
 import com.example.courtpalapp.data.local.MatchEntity
 import com.example.courtpalapp.data.local.SessionManager
-import kotlinx.coroutines.Dispatchers
+import com.example.courtpalapp.feature.matches.components.displayMatchForViewer
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -44,6 +43,9 @@ fun MatchDetailScreen(
     val dao = remember(context) { AppDatabase.getDatabase(context).matchDao() }
     val sessionManager = remember(context) { SessionManager(context) }
     val currentUserId by sessionManager.currentUserId.collectAsState()
+    val userDao = remember(context) { AppDatabase.getDatabase(context).userDao() }
+    val users by remember(userDao) { userDao.getAllUsers() }.collectAsState(initial = emptyList())
+    val usernamesById = remember(users) { users.associate { it.id to it.username } }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var match by remember(matchId, currentUserId) { mutableStateOf<MatchEntity?>(null) }
@@ -53,7 +55,9 @@ fun MatchDetailScreen(
 
     LaunchedEffect(matchId, currentUserId) {
         match = currentUserId?.let { userId ->
-            withContext(Dispatchers.IO) { dao.getMatchByIdForUser(matchId, userId) }
+            withContext(Dispatchers.IO) {
+                dao.getMatchByIdVisibleToUser(matchId, userId)
+            }
         }
         loading = false
     }
@@ -129,28 +133,43 @@ fun MatchDetailScreen(
                 fontWeight = FontWeight.Bold)
 
             val current = match
+            val viewerId = currentUserId
+
             if (loading) {
                 CircularProgressIndicator()
-            } else if (current == null) {
+            } else if (current == null || viewerId == null) {
                 Text("Match not found")
             } else {
+
+                val display = remember(current, viewerId, usernamesById) {
+                    displayMatchForViewer(
+                        match = current,
+                        viewerUserId = viewerId,
+                        usernamesById = usernamesById
+                    )
+                }
+                val canEdit = current.ownerUserId != null &&
+                        current.ownerUserId == currentUserId
+
                 val date = remember(current.playedAt) {
                     SimpleDateFormat("EEE d MMM yyyy", Locale.UK)
                         .format(Date(current.playedAt))
                 }
                 Text(date, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("${current.player1Name} vs ${current.player2Name}",
+                Text(text = display.title,
                     style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                val winner = when (current.winner) {
-                    1 -> current.player1Name
-                    2 -> current.player2Name
-                    else -> "Unknown"
-                }
-                Text("Winner: $winner", color = MaterialTheme.colorScheme.primary)
+                Text(
+                    text = if (current.isCompleted) {
+                        "Winner: ${display.winner}"
+                    } else {
+                        "Match unfinished"
+                    },
+                    color = MaterialTheme.colorScheme.primary
+                )
                 HorizontalDivider()
-                Text("Sets: ${formatMatchSets(current.completedSetsJson)}")
+                Text("Sets: ${display.sets}")
                 if (current.matchMode != "MANUAL") {
-                    Text("Points won: ${current.player1TotalPoints} – ${current.player2TotalPoints}")
+                    Text("Points won: ${display.pointsWon}")
                 }
                 if (current.trackRallies) {
                     Text("Longest rally: ${current.longestRally} shots")
@@ -167,47 +186,74 @@ fun MatchDetailScreen(
                 } else {
                     Text("No photo added", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { cameraLauncher.launch(null) },
-                        modifier = Modifier.weight(1f)) { Text("Take photo") }
-                    OutlinedButton(onClick = { galleryLauncher.launch("image/*") },
-                        modifier = Modifier.weight(1f)) { Text("Choose photo") }
-                }
-                if (current.photoUri != null) {
-                    TextButton(onClick = {
-                        currentUserId?.let { userId ->
-                            scope.launch {
-                                try {
-                                    if (sessionManager.currentUserId.first() != userId) return@launch
-                                    val latest = dao.getMatchByIdForUser(matchId, userId)
-                                    val previousPhoto = latest?.photoUri ?: return@launch
-                                    if (dao.updateMatchPhotoForUser(matchId, userId, null) == 1) {
-                                        match = dao.getMatchByIdForUser(matchId, userId)
-                                        withContext(Dispatchers.IO) {
-                                            deleteOwnedPhoto(context.filesDir, previousPhoto)
+
+                if (canEdit) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { cameraLauncher.launch(null) },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Take photo") }
+                        OutlinedButton(
+                            onClick = { galleryLauncher.launch("image/*") },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Choose photo") }
+                    }
+                    if (current.photoUri != null) {
+                        TextButton(onClick = {
+                            currentUserId?.let { userId ->
+                                scope.launch {
+                                    try {
+                                        if (sessionManager.currentUserId.first() != userId) return@launch
+                                        val latest = dao.getMatchByIdForUser(matchId, userId)
+                                        val previousPhoto = latest?.photoUri ?: return@launch
+                                        if (dao.updateMatchPhotoForUser(
+                                                matchId,
+                                                userId,
+                                                null
+                                            ) == 1
+                                        ) {
+                                            match = dao.getMatchByIdForUser(matchId, userId)
+                                            withContext(Dispatchers.IO) {
+                                                deleteOwnedPhoto(context.filesDir, previousPhoto)
+                                            }
+                                        } else {
+                                            snackbar.showSnackbar("Match not found")
                                         }
-                                    } else {
-                                        snackbar.showSnackbar("Match not found")
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (e: Exception) {
+                                        snackbar.showSnackbar("Could not remove photo")
                                     }
-                                } catch (cancelled: CancellationException) {
-                                    throw cancelled
-                                } catch (e: Exception) {
-                                    snackbar.showSnackbar("Could not remove photo")
                                 }
                             }
-                        }
-                    }) { Text("Remove photo") }
-                }
-                Spacer(Modifier.height(28.dp))
-                OutlinedButton(onClick = { showDeleteConfirmation = true },
-                    modifier = Modifier.fillMaxWidth()) {
-                    Text("Delete match", color = MaterialTheme.colorScheme.error)
+                        }) { Text("Remove photo") }
+                    }
+                    Spacer(Modifier.height(28.dp))
+                    OutlinedButton(
+                        onClick = { showDeleteConfirmation = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Delete match", color = MaterialTheme.colorScheme.error)
+                    }
+                } else {
+                    Spacer(Modifier.height(16.dp))
+
+                    Text(
+                        text = "This match was recorded by your friend. " +
+                                "Only the tracker can edit photos or delete the match.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
     }
 
-    if (showDeleteConfirmation) {
+    if (
+        showDeleteConfirmation &&
+        currentUserId != null &&
+        match?.ownerUserId == currentUserId
+    ) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirmation = false },
             title = { Text("Delete match?") },
@@ -254,18 +300,6 @@ fun MatchDetailScreen(
         )
     }
 }
-
-private fun formatMatchSets(json: String): String = try {
-    val sets = JSONArray(json)
-    if (sets.length() == 0) "Not recorded" else (0 until sets.length()).joinToString("  |  ") { i ->
-        val set = sets.getJSONObject(i)
-        val score = "${set.getInt("player1Games")}–${set.getInt("player2Games")}"
-        if (set.has("player1TieBreakPoints") && !set.isNull("player1TieBreakPoints") &&
-            set.has("player2TieBreakPoints") && !set.isNull("player2TieBreakPoints")) {
-            "$score (TB ${set.getInt("player1TieBreakPoints")}–${set.getInt("player2TieBreakPoints")})"
-        } else score
-    }
-} catch (e: Exception) { "Unavailable" }
 
 private fun photoFolder(context: android.content.Context): File =
     File(context.filesDir, "match_photos").apply { mkdirs() }

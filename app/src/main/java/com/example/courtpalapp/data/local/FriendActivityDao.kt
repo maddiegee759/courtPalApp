@@ -8,12 +8,6 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface FriendActivityDao {
-
-    @Query(
-        "SELECT * FROM friend_activities ORDER BY timestamp DESC, id DESC"
-    )
-    fun getAllActivities(): Flow<List<FriendActivityEntity>>
-
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertActivity(activity: FriendActivityEntity): Long
 
@@ -23,10 +17,4 @@ interface FriendActivityDao {
         ORDER BY timestamp DESC, id DESC
     """)
     fun getBadgeActivitiesForUsers(userIds: List<Long>): Flow<List<FriendActivityEntity>>
-
-    @Query("UPDATE friend_activities SET isRead = 1 WHERE id = :id")
-    suspend fun markAsRead(id: Long)
-
-    @Query("DELETE FROM friend_activities WHERE id = :id")
-    suspend fun deleteActivity(id: Long)
 }
