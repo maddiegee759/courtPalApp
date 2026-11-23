@@ -14,9 +14,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         MatchEntity::class,
         ActiveMatchEntity::class,
         FriendEntity::class,
-        UserEntity::class
+        UserEntity::class,
+        TrainingSessionEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -27,6 +28,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun activeMatchDao(): ActiveMatchDao
     abstract fun friendDao(): FriendDao
     abstract fun userDao(): UserDao
+    abstract fun trainingSessionDao(): TrainingSessionDao
 
     companion object {
 
@@ -70,6 +72,32 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+
+                db.execSQL("""
+            CREATE TABLE IF NOT EXISTS training_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                ownerUserId INTEGER NOT NULL,
+                activityType TEXT NOT NULL,
+                durationMinutes INTEGER NOT NULL,
+                notes TEXT NOT NULL,
+                occurredAt INTEGER NOT NULL,
+                FOREIGN KEY(ownerUserId)
+                    REFERENCES users(id)
+                    ON UPDATE NO ACTION
+                    ON DELETE CASCADE
+            )
+        """.trimIndent())
+
+                db.execSQL("""
+            CREATE INDEX IF NOT EXISTS
+            index_training_sessions_ownerUserId
+            ON training_sessions(ownerUserId)
+        """.trimIndent())
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -80,7 +108,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "app_database"
                 )
-                    .addMigrations(MIGRATION_14_15, MIGRATION_15_16)
+                    .addMigrations(MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
                     .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
                     .build()
                     .also { INSTANCE = it }

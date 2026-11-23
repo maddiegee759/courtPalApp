@@ -40,6 +40,7 @@ import java.util.Locale
 @Composable
 fun HomeScreen(
     onStartMatchClick: () -> Unit = {},
+    onRecordTrainingClick: () -> Unit = {},
     activeMatches: List<ActiveMatchEntity> = emptyList(),
     onContinueMatchClick: (Long) -> Unit = {},
     upcomingMatches: List<CalendarEventEntity> = emptyList(),
@@ -82,6 +83,17 @@ fun HomeScreen(
             )
         }
 
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedButton(
+            onClick = onRecordTrainingClick,
+            modifier = Modifier.width(300.dp)
+        ) {
+            Text(
+                text = "Record Training",
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+        }
 
         if (upcomingMatches.isNotEmpty()) {
 

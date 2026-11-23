@@ -47,6 +47,7 @@ import com.example.courtpalapp.feature.matches.MatchSummaryScreen
 import com.example.courtpalapp.feature.profile.EditProfileScreen
 import com.example.courtpalapp.feature.profile.ProfileScreen
 import com.example.courtpalapp.feature.profile.SettingsScreen
+import com.example.courtpalapp.feature.training.TrainingSessionScreen
 
 private const val MANUAL_RESULT_ROUTE = "manual-result/{settings}?eventId={eventId}"
 
@@ -208,6 +209,18 @@ fun AppNavHost() {
                         navController.navigate(
                             Screen.ScheduledMatchSetup.createRoute(eventId)
                         )
+                    },
+                    onRecordTrainingClick = {
+                        navController.navigate(Screen.TrainingSession.route)
+                    }
+                )
+            }
+
+            composable(Screen.TrainingSession.route) {
+                TrainingSessionScreen(
+                    userId = currentUserId!!,
+                    onBack = {
+                        navController.popBackStack()
                     }
                 )
             }

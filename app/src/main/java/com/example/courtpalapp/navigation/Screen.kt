@@ -3,6 +3,7 @@ package com.example.courtpalapp.navigation
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
     data object Matches : Screen("matches")
+    data object TrainingSession : Screen("training_session")
     data object Friends : Screen("friends")
     data object Calendar : Screen("calendar")
     data object Profile : Screen("profile")
