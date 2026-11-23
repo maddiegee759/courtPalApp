@@ -65,4 +65,14 @@ class UserPreferencesRepository(context: Context) {
         require(value in setOf("SYSTEM", "LIGHT", "DARK"))
         dataStore.edit { it[themeKey(userId)] = value }
     }
+
+    suspend fun clearForUser(userId: Long) {
+        dataStore.edit { preferences ->
+            preferences.remove(scoringKey(userId))
+            preferences.remove(formatKey(userId))
+            preferences.remove(rallyKey(userId))
+            preferences.remove(calendarKey(userId))
+            preferences.remove(themeKey(userId))
+        }
+    }
 }

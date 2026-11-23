@@ -46,4 +46,33 @@ interface MatchDao {
         ORDER BY playedAt DESC
     """)
     fun getMatchesVisibleToUser(userId: Long): Flow<List<MatchEntity>>
+
+    @Query("""
+    SELECT photoUri FROM matches
+    WHERE ownerUserId = :userId
+      AND photoUri IS NOT NULL
+""")
+    suspend fun getOwnedMatchPhotoPaths(
+        userId: Long
+    ): List<String>
+
+    @Query("""
+    DELETE FROM matches
+    WHERE ownerUserId = :userId
+""")
+    suspend fun deleteOwnedMatchesForUser(
+        userId: Long
+    ): Int
+
+    @Query("""
+        UPDATE matches
+        SET player2Id = NULL,
+            player2Name = 'Deleted account'
+        WHERE player2Id = CAST(:userId AS TEXT)
+          AND (
+              ownerUserId IS NULL
+              OR ownerUserId != :userId
+          )
+    """)
+    suspend fun anonymizeOpponentForDeletedUser(userId: Long): Int
 }

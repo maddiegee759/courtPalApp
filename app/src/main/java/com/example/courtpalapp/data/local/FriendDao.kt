@@ -48,4 +48,10 @@ interface FriendDao {
     """)
     suspend fun getFirstFriendshipTime(userId: Long): Long?
 
+    @Query("""
+        DELETE FROM friends
+        WHERE ownerUserId = :userId
+           OR friendUserId = :userId
+    """)
+    suspend fun deleteFriendshipsForUser(userId: Long): Int
 }

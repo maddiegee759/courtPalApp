@@ -40,4 +40,10 @@ interface TrainingSessionDao {
     fun observeTotalTrainingMinutes(
         userId: Long
     ): Flow<Int>
+
+    @Query("""
+        DELETE FROM training_sessions
+        WHERE ownerUserId = :userId
+    """)
+    suspend fun deleteAllForUser(userId: Long): Int
 }

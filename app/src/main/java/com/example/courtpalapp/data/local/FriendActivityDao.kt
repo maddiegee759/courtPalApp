@@ -17,4 +17,15 @@ interface FriendActivityDao {
         ORDER BY timestamp DESC, id DESC
     """)
     fun getBadgeActivitiesForUsers(userIds: List<Long>): Flow<List<FriendActivityEntity>>
+
+    @Query("""
+        DELETE FROM friend_activities
+        WHERE ownerUserId = :userId
+           OR eventId IN (
+               SELECT id FROM calendar_events
+               WHERE ownerUserId = :userId
+                  OR friendId = CAST(:userId AS TEXT)
+           )
+    """)
+    suspend fun deleteActivitiesForAccount(userId: Long): Int
 }

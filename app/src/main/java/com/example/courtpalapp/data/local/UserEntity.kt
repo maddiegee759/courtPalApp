@@ -14,5 +14,6 @@ data class UserEntity(
     val username: String,
     val displayName: String = "",
     val avatarUri: String? = null,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val passwordVerifier: String? = null
 )

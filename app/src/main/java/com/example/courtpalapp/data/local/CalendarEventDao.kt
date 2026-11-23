@@ -168,4 +168,11 @@ interface CalendarEventDao {
         endTime: String,
         location: String
     ): Int
+
+    @Query("""
+        DELETE FROM calendar_events
+        WHERE ownerUserId = :userId
+           OR friendId = CAST(:userId AS TEXT)
+    """)
+    suspend fun deleteEventsForUser(userId: Long): Int
 }

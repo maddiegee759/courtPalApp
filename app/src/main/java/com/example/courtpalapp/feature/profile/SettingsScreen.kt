@@ -1,5 +1,7 @@
 package com.example.courtpalapp.feature.profile
 
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -32,7 +35,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.courtpalapp.data.local.UserPreferencesRepository
 import kotlinx.coroutines.launch
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.example.courtpalapp.data.local.AccountDeletionRepository
+import kotlinx.coroutines.CancellationException
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun SettingsScreen(
     currentUserId: Long,
@@ -50,6 +58,30 @@ fun SettingsScreen(
     }
 
     val scope = rememberCoroutineScope()
+
+    val accountDeletionRepository = remember(context) {
+        AccountDeletionRepository(context)
+    }
+
+    var showDeleteConfirmation by remember(currentUserId) {
+        mutableStateOf(false)
+    }
+
+    var deletePassword by remember(currentUserId) {
+        mutableStateOf("")
+    }
+
+    var deleteConfirmationText by remember(currentUserId) {
+        mutableStateOf("")
+    }
+
+    var isDeletingAccount by remember(currentUserId) {
+        mutableStateOf(false)
+    }
+
+    var deleteAccountError by remember(currentUserId) {
+        mutableStateOf<String?>(null)
+    }
 
     val preferencesFlow = remember(preferencesRepository, currentUserId) {
         preferencesRepository.observePreferences(currentUserId)
@@ -93,18 +125,19 @@ fun SettingsScreen(
             }
 
             OutlinedButton(
-                onClick = {},
-                enabled = false,
-                modifier = Modifier.fillMaxWidth()
+                onClick = {
+                    deletePassword = ""
+                    deleteConfirmationText = ""
+                    deleteAccountError = null
+                    showDeleteConfirmation = true
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
             ) {
                 Text("Delete account")
             }
-
-            Text(
-                text = "Account deletion will be available once account-specific data is implemented.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
 
             HorizontalDivider()
 
@@ -271,6 +304,145 @@ fun SettingsScreen(
                     onClick = {
                         showLogoutConfirmation = false
                     }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+    if (showDeleteConfirmation) {
+
+        AlertDialog(
+            onDismissRequest = {
+                if (!isDeletingAccount) {
+                    showDeleteConfirmation = false
+                    deletePassword = ""
+                    deleteConfirmationText = ""
+                    deleteAccountError = null
+                }
+            },
+
+            title = {
+                Text("Permanently delete account?")
+            },
+
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(
+                        rememberScrollState()
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+
+                    Text(
+                        "This permanently deletes your account, " +
+                                "training history, friends, calendar events, " +
+                                "tracked matches and their photos."
+                    )
+
+                    Text(
+                        "Matches you tracked will also disappear from " +
+                                "your opponents' histories. Matches tracked " +
+                                "by other people will remain, but your " +
+                                "identity will be replaced with " +
+                                "\"Deleted account\".",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+
+                    OutlinedTextField(
+                        value = deletePassword,
+                        onValueChange = {
+                            deletePassword = it
+                            deleteAccountError = null
+                        },
+                        label = {
+                            Text("Your password")
+                        },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        enabled = !isDeletingAccount,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = deleteConfirmationText,
+                        onValueChange = {
+                            deleteConfirmationText = it
+                        },
+                        label = {
+                            Text("Type DELETE to confirm")
+                        },
+                        singleLine = true,
+                        enabled = !isDeletingAccount,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    deleteAccountError?.let { error ->
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val passwordToVerify = deletePassword
+
+                        isDeletingAccount = true
+                        deleteAccountError = null
+
+                        scope.launch {
+                            try {
+                                accountDeletionRepository.deleteAccount(
+                                    userId = currentUserId,
+                                    password = passwordToVerify
+                                )
+
+                                // The repository logs out after successful
+                                // deletion. AppNavHost then shows LoginScreen.
+
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+
+                            } catch (error: Exception) {
+                                deleteAccountError =
+                                    "Could not delete the account. " +
+                                            "Check your password and try again."
+
+                            } finally {
+                                deletePassword = ""
+                                isDeletingAccount = false
+                            }
+                        }
+                    },
+
+                    enabled = !isDeletingAccount &&
+                            deletePassword.isNotBlank() &&
+                            deleteConfirmationText == "DELETE"
+                ) {
+                    Text(
+                        if (isDeletingAccount) {
+                            "Deleting..."
+                        } else {
+                            "Delete forever"
+                        }
+                    )
+                }
+            },
+
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmation = false
+                        deletePassword = ""
+                        deleteConfirmationText = ""
+                        deleteAccountError = null
+                    },
+                    enabled = !isDeletingAccount
                 ) {
                     Text("Cancel")
                 }

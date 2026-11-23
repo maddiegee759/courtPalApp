@@ -28,4 +28,23 @@ interface UserDao {
 
     @Query("UPDATE users SET username = :username, displayName = :username WHERE id = :userId")
     suspend fun updateUsername(userId: Long, username: String)
+
+    @Query("""
+        UPDATE users
+        SET passwordVerifier = :verifier
+        WHERE id = :userId
+          AND passwordVerifier IS NULL
+    """)
+    suspend fun setInitialPassword(userId: Long, verifier: String): Int
+
+    @Query("""
+        UPDATE users
+        SET passwordVerifier = :newVerifier
+        WHERE id = :userId
+          AND passwordVerifier = :oldVerifier
+    """)
+    suspend fun changePasswordVerifier(userId: Long, oldVerifier: String, newVerifier: String): Int
+
+    @Query("DELETE FROM users WHERE id = :userId")
+    suspend fun deleteUserById(userId: Long): Int
 }
