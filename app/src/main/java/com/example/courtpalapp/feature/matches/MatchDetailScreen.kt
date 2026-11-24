@@ -94,7 +94,6 @@ fun MatchDetailScreen(
 
     fun storePhoto(source: suspend () -> String?) {
         val userId = currentUserId ?: return
-        if (match?.ownerUserId != userId) return
 
         scope.launch {
             var newPhotoPath: String? = null
@@ -109,7 +108,7 @@ fun MatchDetailScreen(
                 }
 
                 val existing = dao.getMatchByIdForUser(matchId, userId)
-                if (existing == null || dao.updateMatchPhotoForUser(matchId, userId, path) != 1) {
+                if (existing?.ownerUserId != userId || dao.updateMatchPhotoForUser(matchId, userId, path) != 1) {
                     snackbar.showSnackbar("Match not found")
                     return@launch
                 }
@@ -143,7 +142,18 @@ fun MatchDetailScreen(
     val cameraLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicturePreview()
     ) { bitmap: Bitmap? ->
-        if (bitmap != null) storePhoto { saveBitmapToPrivateStorage(context, bitmap) }
+
+        if (bitmap != null) {
+            storePhoto {
+                saveBitmapToPrivateStorage(context, bitmap)
+            }
+        } else {
+            scope.launch {
+                snackbar.showSnackbar(
+                    "Camera did not return a photo"
+                )
+            }
+        }
     }
 
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->

@@ -244,6 +244,10 @@ fun FriendsScreen(
         mutableStateOf(false)
     }
 
+    var addedFriendUsername by remember {
+        mutableStateOf<String?>(null)
+    }
+
     var addFriendError by remember {
         mutableStateOf<String?>(null)
     }
@@ -712,6 +716,9 @@ fun FriendsScreen(
                                             )
                                         )
 
+                                        showAddFriendDialog = false
+                                        addedFriendUsername = formatUsername(targetUser.username)
+
                                         // The friendship is already saved; badge recording
                                         // should not turn a successful add into an error.
                                         try {
@@ -780,6 +787,36 @@ fun FriendsScreen(
                     }
                 ) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    addedFriendUsername?.let { friendUsername ->
+
+        AlertDialog(
+            onDismissRequest = {
+                addedFriendUsername = null
+            },
+
+            title = {
+                Text("Friend Added!")
+            },
+
+            text = {
+                Text(
+                    "$friendUsername and you are now friends! " +
+                            "See their updates in Friends Activity."
+                )
+            },
+
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        addedFriendUsername = null
+                    }
+                ) {
+                    Text("OK")
                 }
             }
         )
