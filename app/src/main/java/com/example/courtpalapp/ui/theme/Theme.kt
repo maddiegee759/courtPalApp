@@ -19,6 +19,15 @@ private val LightColorScheme = lightColorScheme(
     background = Background,
     onBackground = PrimaryText,
 
+    secondaryContainer = LightBlue,
+    onSecondaryContainer = PrimaryText,
+
+    surfaceVariant = LightBlue,
+    surfaceContainerLow = LightBlue,
+    surfaceContainer = LightBlue,
+    surfaceContainerHigh = LightBlue,
+    surfaceContainerHighest = LightBlue,
+
     surface = Surface,
     onSurface = PrimaryText,
     onSurfaceVariant = SecondaryText,

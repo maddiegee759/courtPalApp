@@ -278,7 +278,27 @@ fun AppNavHost() {
                         navController.navigate("${Screen.Calendar.route}/date/$date") {
                             launchSingleTop = true
                         }
+                    },
+                    onAcceptedMatch = { eventId ->
+                        navController.navigate("${Screen.Calendar.route}/accepted/$eventId") {
+                            launchSingleTop = true
+                        }
                     }
+                )
+            }
+
+            composable(
+                route = "${Screen.Calendar.route}/accepted/{eventId}",
+                arguments = listOf(
+                    navArgument("eventId") {
+                        type = NavType.LongType
+                    }
+                )
+            ) { backStackEntry ->
+
+                CalendarScreen(
+                    selectedEventId = backStackEntry.arguments?.getLong("eventId"),
+                    autoSyncAccepted = true
                 )
             }
 

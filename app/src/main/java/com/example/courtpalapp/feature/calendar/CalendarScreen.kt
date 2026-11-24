@@ -135,7 +135,8 @@ private fun Context.findActivity(): Activity {
 @Composable
 fun CalendarScreen(
     selectedEventId: Long? = null,
-    requestedDate: String? = null
+    requestedDate: String? = null,
+    autoSyncAccepted: Boolean = false
 ) {
 
     val today = remember { LocalDate.now() }
@@ -146,10 +147,6 @@ fun CalendarScreen(
 
     var selectedDate by remember {
         mutableStateOf(today)
-    }
-
-    var acceptedEventToSync by remember {
-        mutableStateOf<CalendarEventEntity?>(null)
     }
 
     LaunchedEffect(requestedDate) {
@@ -246,7 +243,9 @@ fun CalendarScreen(
                 val targetDate = LocalDate.parse(target.date)
                 selectedDate = targetDate
                 displayedMonth = YearMonth.from(targetDate)
-                navigatedEvent = target
+                if (!autoSyncAccepted) {
+                    navigatedEvent = target
+                }
                 handledNavigationId = selectedEventId
             }
         }
@@ -306,6 +305,7 @@ fun CalendarScreen(
                             eventDao.updateGoogleEventId(action.roomEventId, googleId)
                         }
                     }
+
                     GoogleCalendarAction.UPDATE -> {
                         val source = requireNotNull(event)
                         googleCalendarManager.updateEvent(
@@ -318,6 +318,7 @@ fun CalendarScreen(
                             endDateTime = requireNotNull(endDateTime)
                         )
                     }
+
                     GoogleCalendarAction.DELETE -> {
                         val local = eventDao.getEventById(action.roomEventId)
                             ?: throw IllegalStateException("Event no longer exists")
@@ -372,7 +373,9 @@ fun CalendarScreen(
         val token = if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             try {
                 authManager.getAccessToken(authManager.getResultFromIntent(result.data!!))
-            } catch (e: Exception) { null }
+            } catch (e: Exception) {
+                null
+            }
         } else null
 
         if (token != null) {
@@ -414,12 +417,58 @@ fun CalendarScreen(
         )
     }
 
+    var handledAcceptedSyncId by rememberSaveable(selectedEventId) {
+        mutableStateOf<Long?>(null)
+    }
+
+    LaunchedEffect(
+        autoSyncAccepted,
+        selectedEventId,
+        savedEvents
+    ) {
+        if (!autoSyncAccepted || selectedEventId == null) {
+            return@LaunchedEffect
+        }
+
+        if (handledAcceptedSyncId == selectedEventId) {
+            return@LaunchedEffect
+        }
+
+        val acceptedEvent = savedEvents.firstOrNull {
+            it.id == selectedEventId
+        } ?: return@LaunchedEffect
+
+        if (acceptedEvent.status != EventStatus.CONFIRMED.name) {
+            return@LaunchedEffect
+        }
+
+        // Only create the event if it has not already been synced.
+        if (acceptedEvent.googleEventId == null) {
+
+            handledAcceptedSyncId = selectedEventId
+
+            requestGoogleSync(
+                PendingGoogleAction(
+                    action = GoogleCalendarAction.CREATE,
+                    roomEventId = acceptedEvent.id,
+                    event = acceptedEvent.toCalendarEvent()
+                )
+            )
+        } else {
+            handledAcceptedSyncId = selectedEventId
+        }
+    }
+
     var showAddEventDialog by remember {
         mutableStateOf(false)
     }
 
     var eventToEdit by remember { mutableStateOf<CalendarEventEntity?>(null) }
-    var amendmentToConfirm by remember { mutableStateOf<Pair<CalendarEventEntity, CalendarEventEntity>?>(null) }
+    var amendmentToConfirm by remember {
+        mutableStateOf<Pair<CalendarEventEntity, CalendarEventEntity>?>(
+            null
+        )
+    }
     var eventToDelete by remember { mutableStateOf<CalendarEventEntity?>(null) }
     var removeFromGoogle by remember { mutableStateOf(true) }
 
@@ -698,14 +747,22 @@ fun CalendarScreen(
                                     Text("Edit")
                                 }
 
-                                OutlinedButton(
-                                    onClick = {
-                                        eventToDelete = entity
-                                        removeFromGoogle = true
-                                    },
-                                    modifier = Modifier.weight(1f)
+                                if (
+                                    !entity.isLinkedCourtPalFriend() ||
+                                    entity.ownerUserId == currentUserId
                                 ) {
-                                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                                    OutlinedButton(
+                                        onClick = {
+                                            eventToDelete = entity
+                                            removeFromGoogle = true
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            "Delete",
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -718,15 +775,19 @@ fun CalendarScreen(
                         ) {
                             Text(
                                 text = if (entity.ownerUserId == currentUserId) {
-                                    "Proposed to ${entity.displayParticipantName(
-                                        currentUserId,
-                                        entity.ownerUserId?.let { ownerUsernames[it] }
-                                    )}"
+                                    "Proposed to ${
+                                        entity.displayParticipantName(
+                                            currentUserId,
+                                            entity.ownerUserId?.let { ownerUsernames[it] }
+                                        )
+                                    }"
                                 } else {
-                                    "Proposal from ${entity.displayParticipantName(
-                                        currentUserId,
-                                        entity.ownerUserId?.let { ownerUsernames[it] }
-                                    )}"
+                                    "Proposal from ${
+                                        entity.displayParticipantName(
+                                            currentUserId,
+                                            entity.ownerUserId?.let { ownerUsernames[it] }
+                                        )
+                                    }"
                                 },
                                 style = MaterialTheme.typography.bodySmall
                             )
@@ -747,9 +808,21 @@ fun CalendarScreen(
                                                 )
 
                                                 if (updated == 1) {
-                                                    acceptedEventToSync = entity.copy(
-                                                        status = EventStatus.CONFIRMED.name
-                                                    )
+                                                    val acceptedEvent =
+                                                        eventDao.getEventById(entity.id)
+
+                                                    if (
+                                                        acceptedEvent != null &&
+                                                        acceptedEvent.googleEventId == null
+                                                    ) {
+                                                        requestGoogleSync(
+                                                            PendingGoogleAction(
+                                                                action = GoogleCalendarAction.CREATE,
+                                                                roomEventId = acceptedEvent.id,
+                                                                event = acceptedEvent.toCalendarEvent()
+                                                            )
+                                                        )
+                                                    }
                                                 } else {
                                                     snackbarHostState.showSnackbar(
                                                         "This proposal can no longer be accepted"
@@ -869,7 +942,8 @@ fun CalendarScreen(
                                     snackbarHostState.showSnackbar("An amendment is already awaiting approval")
                                 } else if (existing.title == edited.title && existing.date == edited.date &&
                                     existing.startTime == edited.startTime && existing.endTime == edited.endTime &&
-                                    existing.location == edited.location) {
+                                    existing.location == edited.location
+                                ) {
                                     snackbarHostState.showSnackbar("No changes to propose")
                                 } else {
                                     amendmentToConfirm = existing to edited
@@ -906,12 +980,14 @@ fun CalendarScreen(
                             eventToEdit = null
 
                             if (existing.googleEventId != null) {
-                                requestGoogleSync(PendingGoogleAction(
-                                    action = GoogleCalendarAction.UPDATE,
-                                    roomEventId = existing.id,
-                                    event = edited.toCalendarEvent(),
-                                    googleEventId = existing.googleEventId
-                                ))
+                                requestGoogleSync(
+                                    PendingGoogleAction(
+                                        action = GoogleCalendarAction.UPDATE,
+                                        roomEventId = existing.id,
+                                        event = edited.toCalendarEvent(),
+                                        googleEventId = existing.googleEventId
+                                    )
+                                )
                             } else {
                                 snackbarHostState.showSnackbar("Event updated in courtPal")
                             }
@@ -966,9 +1042,11 @@ fun CalendarScreen(
                                 endTime = proposed.endTime,
                                 location = proposed.location
                             )
-                            snackbarHostState.showSnackbar(if (saved == 1)
-                                "Amendment sent for approval"
-                            else "Could not propose changes; refresh the event")
+                            snackbarHostState.showSnackbar(
+                                if (saved == 1)
+                                    "Amendment sent for approval"
+                                else "Could not propose changes; refresh the event"
+                            )
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("Could not save amended proposal")
                         }
@@ -984,20 +1062,28 @@ fun CalendarScreen(
     eventToDelete?.let { event ->
         AlertDialog(
             onDismissRequest = { eventToDelete = null },
-            title = { Text(when {
-                event.status == EventStatus.CANCELLED.name -> "Delete cancelled match permanently?"
-                event.isLinkedCourtPalFriend() -> "Cancel match?"
-                else -> "Delete event?"
-            }) },
+            title = {
+                Text(
+                    when {
+                        event.status == EventStatus.CANCELLED.name -> "Delete cancelled match permanently?"
+                        event.isLinkedCourtPalFriend() -> "Cancel match?"
+                        else -> "Delete event?"
+                    }
+                )
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(when {
-                        event.status == EventStatus.CANCELLED.name ->
-                            "Permanently remove this cancelled match from your courtPal calendar? This cannot be undone."
-                        event.isLinkedCourtPalFriend() ->
-                            "Cancel this match in courtPal?"
-                        else -> "Delete this event from courtPal?"
-                    })
+                    Text(
+                        when {
+                            event.status == EventStatus.CANCELLED.name ->
+                                "Permanently remove this cancelled match from your courtPal calendar? This cannot be undone."
+
+                            event.isLinkedCourtPalFriend() ->
+                                "Cancel this match in courtPal?"
+
+                            else -> "Delete this event from courtPal?"
+                        }
+                    )
                     if (event.googleEventId != null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(
@@ -1017,14 +1103,16 @@ fun CalendarScreen(
                         removeFromGoogle &&
                         (
                                 !event.isLinkedCourtPalFriend() ||
-                                event.ownerUserId == currentUserId
+                                        event.ownerUserId == currentUserId
                                 )
                     ) {
-                        requestGoogleSync(PendingGoogleAction(
-                            action = GoogleCalendarAction.DELETE,
-                            roomEventId = event.id,
-                            googleEventId = event.googleEventId
-                        ))
+                        requestGoogleSync(
+                            PendingGoogleAction(
+                                action = GoogleCalendarAction.DELETE,
+                                roomEventId = event.id,
+                                googleEventId = event.googleEventId
+                            )
+                        )
                         eventToDelete = null
                     } else {
                         coroutineScope.launch {
@@ -1082,7 +1170,10 @@ fun CalendarScreen(
                     Text("Date: ${target.date}")
                     Text("Time: ${target.startTime}–${target.endTime}")
                     Text("Location: ${target.location}")
-                    target.displayParticipantName(currentUserId = currentUserId, ownerUsername = target.ownerUserId?.let { ownerUsernames[it] })?.let { Text("Playing with: $it") }
+                    target.displayParticipantName(
+                        currentUserId = currentUserId,
+                        ownerUsername = target.ownerUserId?.let { ownerUsernames[it] })
+                        ?.let { Text("Playing with: $it") }
                     if (target.googleEventId == null) {
                         Text("Would you like to add this match to Google Calendar?")
                     } else {
@@ -1105,61 +1196,19 @@ fun CalendarScreen(
                 } else {
                     TextButton(onClick = {
                         navigatedEvent = null
-                        requestGoogleSync(PendingGoogleAction(
-                            action = GoogleCalendarAction.UPDATE,
-                            roomEventId = target.id,
-                            event = target.toCalendarEvent(),
-                            googleEventId = target.googleEventId
-                        ))
+                        requestGoogleSync(
+                            PendingGoogleAction(
+                                action = GoogleCalendarAction.UPDATE,
+                                roomEventId = target.id,
+                                event = target.toCalendarEvent(),
+                                googleEventId = target.googleEventId
+                            )
+                        )
                     }) { Text("Yes, update event") }
                 }
             },
             dismissButton = {
                 TextButton(onClick = { navigatedEvent = null }) { Text("No thanks") }
-            }
-        )
-    }
-
-    acceptedEventToSync?.let { acceptedEvent ->
-
-        AlertDialog(
-            onDismissRequest = {
-                acceptedEventToSync = null
-            },
-            title = {
-                Text("Add to Google Calendar?")
-            },
-            text = {
-                Text(
-                    "Your tennis match has been confirmed. " +
-                            "Would you like to add it to your Google Calendar?"
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        acceptedEventToSync = null
-
-                        requestGoogleSync(
-                            PendingGoogleAction(
-                                action = GoogleCalendarAction.CREATE,
-                                roomEventId = acceptedEvent.id,
-                                event = acceptedEvent.toCalendarEvent()
-                            )
-                        )
-                    }
-                ) {
-                    Text("Yes, add event")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        acceptedEventToSync = null
-                    }
-                ) {
-                    Text("No thanks")
-                }
             }
         )
     }
@@ -1488,12 +1537,6 @@ private fun EditCalendarEventDialog(
                     label = { Text("Location") },
                     singleLine = true
                 )
-                existingEvent.displayFriendName()?.let {
-                    Text(
-                        "Match with ${if (existingEvent.isLinkedCourtPalFriend()) formatUsername(it) else it} (friend cannot be changed)",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
             }
         },
         confirmButton = {

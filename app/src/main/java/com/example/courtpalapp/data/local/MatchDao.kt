@@ -36,9 +36,16 @@ interface MatchDao {
     @Query("SELECT * FROM matches WHERE isCompleted = 1 AND ownerUserId = :userId ORDER BY playedAt DESC")
     fun getCompletedMatchesForUser(userId: Long): Flow<List<MatchEntity>>
 
-    @Query("SELECT * FROM matches WHERE isCompleted = 1 AND ownerUserId IN (:userIds) ORDER BY playedAt DESC")
+    @Query("""
+        SELECT * FROM matches
+        WHERE isCompleted = 1
+          AND (
+              ownerUserId IN (:userIds)
+              OR CAST(player2Id AS INTEGER) IN (:userIds)
+          )
+        ORDER BY playedAt DESC
+    """)
     fun getCompletedMatchesForUsers(userIds: List<Long>): Flow<List<MatchEntity>>
-
     @Query("""
         SELECT * FROM matches
         WHERE ownerUserId = :userId

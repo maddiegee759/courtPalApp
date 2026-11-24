@@ -1,26 +1,27 @@
 package com.example.courtpalapp.feature.matches
 
+import android.os.Build
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
-import com.example.courtpalapp.domain.match.MatchSettings
-import com.example.courtpalapp.domain.match.TennisScore
-import com.example.courtpalapp.domain.match.TennisScoring
 import androidx.lifecycle.viewModelScope
-import com.example.courtpalapp.data.local.toMatchEntity
-import com.example.courtpalapp.feature.profile.recordEarnedBadges
-import kotlinx.coroutines.launch
+import androidx.room.withTransaction
 import com.example.courtpalapp.data.local.ActiveMatchDao
 import com.example.courtpalapp.data.local.ActiveMatchEntity
 import com.example.courtpalapp.data.local.ActiveMatchJson
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.launch
-import androidx.room.withTransaction
 import com.example.courtpalapp.data.local.AppDatabase
+import com.example.courtpalapp.data.local.toMatchEntity
+import com.example.courtpalapp.domain.match.MatchSettings
+import com.example.courtpalapp.domain.match.TennisScore
+import com.example.courtpalapp.domain.match.TennisScoring
+import com.example.courtpalapp.feature.profile.recordEarnedBadges
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 class LiveMatchViewModel : ViewModel() {
 
@@ -170,6 +171,7 @@ class LiveMatchViewModel : ViewModel() {
     }
 
 
+    @RequiresApi(Build.VERSION_CODES.O)
     fun saveCompletedMatch(
         database: AppDatabase,
         ownerUserId: Long,

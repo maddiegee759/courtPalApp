@@ -62,23 +62,23 @@ import androidx.compose.ui.unit.dp
 import com.example.courtpalapp.common.formatDateTime
 import com.example.courtpalapp.common.formatUsername
 import com.example.courtpalapp.data.local.AppDatabase
+import com.example.courtpalapp.data.local.FriendActivityEntity
 import com.example.courtpalapp.data.local.FriendDisplay
 import com.example.courtpalapp.data.local.FriendEntity
-import com.example.courtpalapp.data.local.FriendActivityEntity
 import com.example.courtpalapp.data.local.MatchEntity
 import com.example.courtpalapp.data.local.SessionManager
 import com.example.courtpalapp.feature.calendar.EventStatus
 import com.example.courtpalapp.feature.profile.recordEarnedBadges
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDate
+import org.json.JSONArray
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import org.json.JSONArray
 
 data class FriendMatchProposal(
     val id: Long,
@@ -95,8 +95,11 @@ private sealed interface FriendFeedItem {
     val timestamp: Long
     val stableKey: String
 
-    data class MatchPost(val match: MatchEntity) : FriendFeedItem {
-        override val ownerUserId: Long get() = requireNotNull(match.ownerUserId)
+    data class MatchPost(
+        val match: MatchEntity,
+        val friendUserId: Long
+    ) : FriendFeedItem {
+        override val ownerUserId: Long get() = friendUserId
         override val timestamp: Long get() = match.playedAt
         override val stableKey: String get() = "match_${match.id}"
     }
@@ -112,7 +115,8 @@ private sealed interface FriendFeedItem {
 @Composable
 fun FriendsScreen(
     onNavigateToCalendarEvent: (Long) -> Unit = {},
-    onNavigateToCalendarDate: (String) -> Unit = {}
+    onNavigateToCalendarDate: (String) -> Unit = {},
+    onAcceptedMatch: (Long) -> Unit = {}
 ) {
     val context = LocalContext.current
 
@@ -185,10 +189,55 @@ fun FriendsScreen(
         }
     }
 
-    val friendActivities: List<FriendFeedItem> = remember(friendMatches, earnedBadges) {
-        (friendMatches.map { FriendFeedItem.MatchPost(it) } +
-            earnedBadges.map { FriendFeedItem.BadgePost(it) })
-            .sortedWith(compareByDescending<FriendFeedItem> { it.timestamp }.thenBy { it.stableKey })
+    val friendActivities: List<FriendFeedItem> =
+        remember(friendMatches, earnedBadges, friendUserIds) {
+            val matchPosts = friendMatches.mapNotNull { match ->
+                val creatorId = match.ownerUserId
+                val opponentId = match.player2Id?.toLongOrNull()
+                val activityFriendId = when {
+                    creatorId != null && creatorId in friendUserIds ->
+                        creatorId
+                    opponentId != null && opponentId in friendUserIds ->
+                        opponentId
+                    else -> null
+                }
+                activityFriendId?.let { friendId ->
+                    FriendFeedItem.MatchPost(
+                        match = match,
+                        friendUserId = friendId
+                    )
+                }
+            }
+            (
+                    matchPosts +
+                            earnedBadges.map { FriendFeedItem.BadgePost(it) }
+                    ).sortedWith(
+                    compareByDescending<FriendFeedItem> { it.timestamp }
+                        .thenBy { it.stableKey }
+                )
+        }
+
+    val matchParticipantIds = remember(friendMatches) {
+        friendMatches.flatMap { match ->
+            listOfNotNull(
+                match.ownerUserId,
+                match.player2Id?.toLongOrNull()
+            )
+        }.distinct()
+    }
+
+    var matchUsernames by remember {
+        mutableStateOf<Map<Long, String>>(emptyMap())
+    }
+
+    LaunchedEffect(matchParticipantIds, friends, userDao) {
+        val usernames = matchParticipantIds.mapNotNull { userId ->
+            userDao.getUserById(userId)?.let { user ->
+                userId to user.username
+            }
+        }.toMap()
+
+        matchUsernames = usernames
     }
 
     var showAddFriendDialog by remember {
@@ -389,7 +438,7 @@ fun FriendsScreen(
                                 )
 
                                 if (updated == 1) {
-                                    onNavigateToCalendarEvent(proposal.id)
+                                    onAcceptedMatch(proposal.id)
                                 }
                             }
                         },
@@ -584,7 +633,7 @@ fun FriendsScreen(
                     key = { it.stableKey }
                 ) { activity ->
                     friendsById[activity.ownerUserId]?.let { friend ->
-                        FriendActivityCard(activity, friend)
+                        FriendActivityCard(activity, friend, matchUsernames)
                     }
                 }
             }
@@ -844,7 +893,8 @@ private fun MatchProposalCard(
 @Composable
 private fun FriendActivityCard(
     post: FriendFeedItem,
-    friend: FriendDisplay
+    friend: FriendDisplay,
+    matchUsernames: Map<Long, String>
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -881,6 +931,43 @@ private fun FriendActivityCard(
             when (post) {
                 is FriendFeedItem.MatchPost -> {
                     val match = post.match
+                    val friendIsCreator = match.ownerUserId == post.friendUserId
+
+                    val friendWon = when (match.winner) {
+                        1 -> friendIsCreator
+                        2 -> !friendIsCreator
+                        else -> null
+                    }
+
+                    val creatorName = match.ownerUserId
+                        ?.let { matchUsernames[it] }
+                        ?.let { formatUsername(it) }
+                        ?: if (match.player1Name.equals("You", ignoreCase = true)) {
+                            "Unknown player"
+                        } else {
+                            match.player1Name
+                        }
+
+                    val opponentName = match.player2Id
+                        ?.toLongOrNull()
+                        ?.let { matchUsernames[it] }
+                        ?.let { formatUsername(it) }
+                        ?: match.player2Name
+
+                    val player1DisplayName =
+                        if (friendIsCreator) {
+                            formatUsername(friend.username)
+                        } else {
+                            creatorName
+                        }
+
+                    val player2DisplayName =
+                        if (!friendIsCreator) {
+                            formatUsername(friend.username)
+                        } else {
+                            opponentName
+                        }
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -905,12 +992,17 @@ private fun FriendActivityCard(
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         Text(
-                            text = if (match.winner == 1) "Match won" else "Match lost",
+                            text = when (friendWon) {
+                                true -> "Match won"
+                                false -> "Match lost"
+                                null -> "Match completed"
+                            },
                             color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
-                        Text("${match.player1Name} vs ${match.player2Name}")
+
+                        Text("$player1DisplayName vs $player2DisplayName")
                         Text(
                             text = "Sets: ${formatMatchSets(match)}",
                             style = MaterialTheme.typography.bodyMedium

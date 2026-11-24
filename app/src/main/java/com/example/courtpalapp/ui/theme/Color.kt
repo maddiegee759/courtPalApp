@@ -7,6 +7,8 @@ val PrimaryGreen = Color(0xFF157145)
 val DarkGreen = Color(0xFF0B3D26)
 val LightGreen = Color(0xFFE1F2E8)
 
+val LightBlue = Color(0xFFE8F3FF)
+
 // Light mode
 val Background = Color(0xFFF8FAF8)
 val Surface = Color(0xFFFFFFFF)

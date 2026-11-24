@@ -23,10 +23,10 @@ import androidx.room.withTransaction
 import com.example.courtpalapp.data.local.AppDatabase
 import com.example.courtpalapp.data.local.SessionManager
 import com.example.courtpalapp.data.local.toMatchEntity
-import com.example.courtpalapp.feature.profile.recordEarnedBadges
 import com.example.courtpalapp.domain.match.MatchSettings
 import com.example.courtpalapp.domain.match.SetScore
 import com.example.courtpalapp.domain.match.TennisScoring
+import com.example.courtpalapp.feature.profile.recordEarnedBadges
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable

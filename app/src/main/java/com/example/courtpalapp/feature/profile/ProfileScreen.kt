@@ -2,8 +2,8 @@ package com.example.courtpalapp.feature.profile
 
 import android.content.Intent
 import android.graphics.BitmapFactory
-import android.util.Log
 import android.os.Build
+import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
