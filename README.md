@@ -13,6 +13,9 @@ Built with Kotlin and Jetpack Compose, courtPal combines a match-scoring tool wi
 - Pause and resume: Save an unfinished match and continue it later
 - Match history: Review completed and unfinished matches, including set scores and additional match statistics where recorded
 - Photos: Take or attach a photo to a completed match
+#### Training sessions
+- Record tennis training sessions
+- Keep track of training activity
 #### Calendar and scheduling
 - Create and manage tennis events and planned matches
 - Schedule a match with a CourtPal friend or enter a guest player's name
@@ -33,13 +36,27 @@ Built with Kotlin and Jetpack Compose, courtPal combines a match-scoring tool wi
 - Create an account and log in with a username and password
 
 ## Setup
-<strong>Requirements</strong><br>Android Studio with an Android SDK installed
-An Android device or emulator
+<strong>Requirements</strong>
+1. Android Studio with Android SDK installed
+2. An Android device or emulator
 
-Open this folder in Android Studio e.g.
+<strong>Installation</strong>
+1. Clone this repository:
 ```
 git clone https://github.com/maddiegee759/courtPalApp
-cd courtPalApp
 ```
+2. Open this folder in Android Studio
+3. Allow Gradle to sync and install any requested Android SDK components
 
-<strong>Build the app</strong><br>Allow Gradle to sync and install any requested Android SDK components<br>Select a physical device or emulator in 'Device Manager'<br>At the top bar select the device from the dropdown press the green arrow to run<br>
+<strong>Run the app</strong>
+1. Select a physical device or emulator in 'Device Manager'
+   To connect an Android device enable USB or wireless debugging
+2. Select the device from the toolbar dropdown, then press the <strong>green arrow to run</strong>
+
+## Current limitations
+- User accounts, friendships and shared match history currently operate
+  within the same local database. Cross-device synchronisation is not
+  yet supported
+- Google Calendar integration requires internet access and Google
+  authorisation
+- The app is designed for portrait orientation
